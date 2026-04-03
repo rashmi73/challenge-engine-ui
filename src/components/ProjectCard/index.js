@@ -2,29 +2,33 @@ import React from 'react'
 import PT from 'prop-types'
 import { Link } from 'react-router-dom'
 import cn from 'classnames'
-import xss from 'xss'
+import { find } from 'lodash'
+
+import { PROJECT_STATUSES } from '../../config/constants'
 
 import styles from './ProjectCard.module.scss'
 
-const ProjectCard = ({ projectName, projectId, selected, setActiveProject }) => {
+const ProjectCard = ({ projectName, projectStatus, projectId, selected }) => {
   return (
     <div className={styles.container}>
       <Link
-        to={`/projects/${projectId}/challenges`}
+        to={`/projects/${projectId}`}
         className={cn(styles.projectName, { [styles.selected]: selected })}
-        onClick={() => setActiveProject(parseInt(projectId))}
       >
-        <div className={styles.name} dangerouslySetInnerHTML={{ __html: xss(projectName) }} />
+        <div className={styles.name}>
+          <span>{projectName}</span>
+          <span className={styles.status}>{find(PROJECT_STATUSES, { value: projectStatus }).label}</span>
+        </div>
       </Link>
     </div>
   )
 }
 
 ProjectCard.propTypes = {
+  projectStatus: PT.string.isRequired,
   projectId: PT.number.isRequired,
   projectName: PT.string.isRequired,
-  selected: PT.bool.isRequired,
-  setActiveProject: PT.func
+  selected: PT.bool
 }
 
 export default ProjectCard

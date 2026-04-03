@@ -21,6 +21,25 @@ const webpack = require('webpack')
 const WebpackDevServer = require('webpack-dev-server')
 const clearConsole = require('react-dev-utils/clearConsole')
 const checkRequiredFiles = require('react-dev-utils/checkRequiredFiles')
+const formatWebpackMessages = require('react-dev-utils/formatWebpackMessages')
+// Webpack 5 returns error objects; normalize to strings for react-dev-utils@7.
+const normalizeWebpackMessages = (json = {}) => {
+  const normalizeMessage = (message) => {
+    if (typeof message === 'string') return message
+    if (message && typeof message.message === 'string') return message.message
+    if (message && typeof message.stack === 'string') return message.stack
+    return String(message)
+  }
+  return {
+    ...json,
+    errors: Array.isArray(json.errors) ? json.errors.map(normalizeMessage) : [],
+    warnings: Array.isArray(json.warnings) ? json.warnings.map(normalizeMessage) : []
+  }
+}
+const formatWebpackMessagesPatched = (json) =>
+  formatWebpackMessages(normalizeWebpackMessages(json))
+require.cache[require.resolve('react-dev-utils/formatWebpackMessages')].exports =
+  formatWebpackMessagesPatched
 const {
   choosePort,
   createCompiler,
@@ -32,8 +51,14 @@ const paths = require('../config/paths')
 const configFactory = require('../config/webpack.config')
 const createDevServerConfig = require('../config/webpackDevServer.config')
 
-const useYarn = fs.existsSync(paths.yarnLockFile)
+const useYarn = false
 const isInteractive = process.stdout.isTTY
+
+// Optional debug logging (enable with WM_DEBUG=1)
+const WM_DEBUG = /^(1|true|on|yes)$/i.test(String(process.env.WM_DEBUG || ''))
+const dlog = (...args) => {
+  if (WM_DEBUG) console.log(chalk.gray('[wm-debug]'), ...args)
+}
 
 // Warn and crash if required files are missing
 if (!checkRequiredFiles([paths.appHtml, paths.appIndexJs])) {
@@ -43,6 +68,27 @@ if (!checkRequiredFiles([paths.appHtml, paths.appIndexJs])) {
 // Tools like Cloud9 rely on this.
 const DEFAULT_PORT = parseInt(process.env.PORT, 10) || 3000
 const HOST = process.env.HOST || '0.0.0.0'
+
+if (WM_DEBUG) {
+  // Print environment and versions up front for easier diagnosis
+  const webpackVersion = (() => {
+    try { return require('webpack/package.json').version } catch (e) { return 'unknown' }
+  })()
+  const wdsVersion = (() => {
+    try { return require('webpack-dev-server/package.json').version } catch (e) { return 'unknown' }
+  })()
+  dlog('Node', process.version, 'webpack', webpackVersion, 'wds', wdsVersion)
+  dlog('ENV', {
+    BABEL_ENV: process.env.BABEL_ENV,
+    NODE_ENV: process.env.NODE_ENV,
+    PORT: process.env.PORT,
+    HOST: process.env.HOST,
+    HTTPS: process.env.HTTPS,
+    FORCE_DEV: process.env.FORCE_DEV,
+    CI: process.env.CI,
+    CHOKIDAR_USEPOLLING: process.env.CHOKIDAR_USEPOLLING
+  })
+}
 
 if (process.env.HOST) {
   console.log(
@@ -76,20 +122,86 @@ checkBrowsers(paths.appPath, isInteractive)
       return
     }
     const config = configFactory('development')
+    if (WM_DEBUG) {
+      dlog('Webpack config summary', {
+        mode: config.mode,
+        devtool: config.devtool,
+        entryCount: Array.isArray(config.entry) ? config.entry.length : Object.keys(config.entry || {}).length,
+        outputPublicPath: config.output && config.output.publicPath
+      })
+      if (config.infrastructureLogging && config.infrastructureLogging.level) {
+        dlog('infrastructureLogging.level =', config.infrastructureLogging.level)
+      }
+    }
     const protocol = process.env.HTTPS === 'true' ? 'https' : 'http'
     const appName = require(paths.appPackageJson).name
     const urls = prepareUrls(protocol, HOST, port)
     // Create a webpack compiler that is configured with custom messages.
     const compiler = createCompiler(webpack, config, appName, urls, useYarn)
+
+    // Extra compiler lifecycle logging (useful if it hangs during compilation)
+    if (compiler && compiler.hooks) {
+      let compileStart = 0
+      compiler.hooks.compile.tap('WMDebug', () => {
+        compileStart = Date.now()
+        dlog('Compiler: compile started')
+      })
+      compiler.hooks.invalid.tap('WMDebug', filename => {
+        dlog('Compiler: invalidated by change', filename || '')
+      })
+      compiler.hooks.done.tap('WMDebug', stats => {
+        const ms = compileStart ? (Date.now() - compileStart) : 'n/a'
+        dlog('Compiler: done', typeof ms === 'number' ? `${ms}ms` : ms)
+        if (WM_DEBUG) {
+          const hasErrors = stats.hasErrors()
+          const hasWarnings = stats.hasWarnings()
+          dlog('Compiler: errors?', hasErrors, 'warnings?', hasWarnings)
+        }
+      })
+      compiler.hooks.failed && compiler.hooks.failed.tap('WMDebug', err => {
+        console.error(chalk.red('[wm-debug] Compiler: failed'))
+        console.error(err)
+      })
+    }
     // Load proxy config
     const proxySetting = require(paths.appPackageJson).proxy
     const proxyConfig = prepareProxy(proxySetting, paths.appPublic)
+    if (WM_DEBUG) {
+      dlog('Proxy setting', proxySetting || null)
+      dlog('Proxy prepared?', Array.isArray(proxyConfig) ? `${proxyConfig.length} entries` : typeof proxyConfig)
+    }
     // Serve webpack assets generated by the compiler over a web server.
     const serverConfig = createDevServerConfig(
       proxyConfig,
       urls.lanUrlForConfig
     )
+    if (WM_DEBUG) {
+      // Avoid logging large objects; pick a few key flags
+      const serverSummary = {
+        host: HOST,
+        https: protocol === 'https',
+        hot: serverConfig && serverConfig.hot,
+        quiet: serverConfig && serverConfig.quiet,
+        clientLogLevel: serverConfig && serverConfig.clientLogLevel,
+        publicPath: serverConfig && serverConfig.publicPath,
+        watchContentBase: serverConfig && serverConfig.watchContentBase
+      }
+      dlog('DevServer config summary', serverSummary)
+    }
     const devServer = new WebpackDevServer(compiler, serverConfig)
+    if (WM_DEBUG) {
+      dlog('WebpackDevServer instance created')
+      // Hook low-level server events when available
+      try {
+        const srv = devServer && (devServer.listeningApp || devServer.server)
+        if (srv && srv.on) {
+          srv.on('listening', () => dlog('Node server: listening event'))
+          srv.on('error', (e) => console.error(chalk.red('[wm-debug] Node server error:'), e))
+        }
+      } catch (e) {
+        dlog('Unable to attach low-level server event hooks')
+      }
+    }
     // Launch WebpackDevServer.
     devServer.listen(port, HOST, err => {
       if (err) {
@@ -99,7 +211,8 @@ checkBrowsers(paths.appPath, isInteractive)
         clearConsole()
       }
       console.log(chalk.cyan('Starting the development server...\n'))
-      openBrowser(constants.DEV_APP_URL ? `${constants.DEV_APP_URL}:${process.env.PORT || 3000}` : urls.localUrlForBrowser)
+      dlog('Dev server listening on', `${protocol}://${HOST}:${port}`)
+      openBrowser(urls.localUrlForBrowser)
     })
 
     const SIGNALS = ['SIGINT', 'SIGTERM']
@@ -111,8 +224,10 @@ checkBrowsers(paths.appPath, isInteractive)
     })
   })
   .catch(err => {
-    if (err && err.message) {
-      console.error(err.message)
+    if (err && process.env.NODE_ENV === 'development') {
+      console.log(err)
+    } else {
+      console.error('An error occurred while starting the development server')
     }
     process.exit(1)
   })

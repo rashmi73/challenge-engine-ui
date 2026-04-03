@@ -1,11 +1,11 @@
-@import "../../styles/includes";
+@use '../../styles/includes' as *;
 
 .container {
   display: flex;
   justify-content: space-between;
   align-items: center;
   width: auto;
-  height: 40px;
+  height: 42px;
   border: 1px solid transparent;
   border-radius: 20px;
   cursor: pointer;

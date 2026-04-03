@@ -1,21 +1,38 @@
-@import "../../../styles/includes";
+@use '../../../styles/includes' as *;
+
+.title {
+  @include roboto-bold();
+
+  font-size: 24px;
+  font-weight: 700;
+  line-height: 29px;
+  color: $challenges-title;
+  margin-top: 30px;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+
+  i {
+    font-weight: 400;
+    font-size: 14px;
+  }
+}
 
 .container {
   display: flex;
   flex-direction: column;
 
-
-   .error {
-      color: $tc-red;
-      margin-left: 25px;
-   }
+  .error {
+    color: $tc-red;
+    margin-left: 25px;
+  }
   .row {
     box-sizing: border-box;
     display: flex;
     flex-direction: row;
     align-content: space-between;
     justify-content: flex-start;
-    margin-top: 30px;
+    margin-top: 25px;
 
     .field {
       @include upto-sm {
@@ -115,4 +132,9 @@
   }
 }
 
-
+.button {
+  margin: 30px 0 0 30px;
+  min-width: 212px;
+  height: 40px;
+  align-self: flex-start;
+}

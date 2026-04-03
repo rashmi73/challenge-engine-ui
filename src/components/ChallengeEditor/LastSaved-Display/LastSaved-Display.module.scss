@@ -1,0 +1,13 @@
+@use '../../../styles/includes' as *;
+
+.container {
+  display: flex;
+  margin: 0px 30px;
+
+  & p {
+    @include roboto-light();
+    font-size: 15px;
+    margin: 0;
+    color: $gray;
+  }
+}

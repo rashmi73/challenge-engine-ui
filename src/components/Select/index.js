@@ -1,26 +1,84 @@
-import React from 'react'
+import React, { useEffect, useState } from 'react'
 import _ from 'lodash'
-import ReactSelect from 'react-select'
+import ReactSelect, { components } from 'react-select'
+import CreatableSelect from 'react-select/creatable'
+import AsyncSelect from 'react-select/async'
 import PT from 'prop-types'
-import styles from './Select.module.scss'
+import styles from './styles'
+
+const menuList = ({ onMenuScrollBottom }) => {
+  let menuListRef = null
+
+  const handleOnScroll = (ev) => {
+    ev.preventDefault()
+    const el = ev.target
+    if (el.scrollTop + el.offsetHeight >= el.scrollHeight - 10) {
+      onMenuScrollBottom()
+    }
+  }
+
+  const setMenuListRef = (ref) => {
+    if (!menuListRef) {
+      ref.addEventListener('scroll', handleOnScroll, false)
+    }
+    menuListRef = ref
+  }
+  const MenuList = (props) => (
+    <components.MenuList key='projects-select--menu-list' {...props} innerRef={onMenuScrollBottom ? (ref) => { setMenuListRef(ref); props.innerRef(ref) } : props.innerRef} />
+  )
+
+  MenuList.propTypes = {
+    innerRef: PT.any
+  }
+
+  return MenuList
+}
 
 export default function Select (props) {
-  const { selectRef } = props
+  const { selectRef, isCreatable, isAsync } = props
+  const [components, setComponents] = useState({})
+
+  useEffect(() => {
+    setComponents((prev) => ({ ...prev, MenuList: menuList(props) }))
+  }, [props.onMenuScrollBottom])
+
+  if (isAsync) {
+    return (<AsyncSelect
+      ref={selectRef}
+      {...props}
+      autosize={false}
+      styles={styles}
+    />)
+  }
+  if (isCreatable) {
+    return (<CreatableSelect
+      ref={selectRef}
+      {...props}
+      autosize={false}
+      styles={styles}
+    />)
+  }
+
   return (
-    <div className={styles.select}>
-      <ReactSelect
-        ref={selectRef}
-        {...props}
-        autosize={false}
-      />
-    </div>
+    <ReactSelect
+      ref={selectRef}
+      {...props}
+      autosize={false}
+      styles={styles}
+      components={components}
+    />
   )
 }
 
 Select.defaultProps = {
-  selectRef: _.noop
+  selectRef: _.noop,
+  isCreatable: false,
+  isAsync: false
 }
 
 Select.propTypes = {
-  selectRef: PT.func
+  selectRef: PT.func,
+  isCreatable: PT.bool,
+  isAsync: PT.bool,
+  onMenuScrollBottom: PT.func
 }

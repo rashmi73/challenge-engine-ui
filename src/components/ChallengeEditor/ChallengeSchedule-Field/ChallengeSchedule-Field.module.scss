@@ -1,10 +1,14 @@
-@import "../../../styles/includes";
+@use '../../../styles/includes' as *;
 
 .container {
   padding: 20px;
   display: flex;
   flex-direction: column;
   z-index: 3;
+
+  .actionButtons {
+    display: flex;
+  }
 
   .PhaseRow {
     display: flex;
@@ -51,8 +55,6 @@
     margin: 30px 30px 0 30px;
     height: 40px;
 
-
-
     .field {
       @include upto-sm {
         display: block;
@@ -77,6 +79,10 @@
         white-space: nowrap;
         display: flex;
         align-items: center;
+
+        .red {
+          color: $tc-red;
+        }
       }
 
       &.title {
@@ -87,6 +93,11 @@
           color: $gray;
           font-size: 15px;
         }
+      }
+
+      &.col1.error {
+        color: $tc-red;
+        margin-top: -25px;
       }
 
       &.col2 {
@@ -118,10 +129,18 @@
             margin-right: 5px;
           }
 
+          svg {
+            transform: scale(1, -1);
+          }
+
           &.active {
             color: $tc-blue-20;
             span {
               color: $tc-blue-20;
+            }
+
+            svg {
+              transform: scale(1, 1);
             }
           }
         }
@@ -203,4 +222,3 @@
     }
   }
 }
-

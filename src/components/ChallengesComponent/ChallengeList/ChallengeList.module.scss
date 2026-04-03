@@ -1,10 +1,36 @@
-@import "../../../styles/includes";
+@use '../../../styles/includes' as *;
 
 .list {
   width: 100%;
   display: flex;
   flex-direction: column;
   justify-content: space-between;
+
+  /* Match legacy heading style for "My Challenges" on dashboard */
+  > h2 {
+    @include roboto-bold();
+
+    font-size: 24px;
+    font-weight: 700;
+    line-height: 29px;
+    color: $challenges-title;
+    margin: 0 0 16px 0;
+    text-align: left;
+  }
+}
+
+.col-6 {
+  flex: 0 0 50%;
+  max-width: 50%;
+}
+
+.col-9 {
+  flex: 0 0 75%;
+  max-width: 75%;
+}
+
+.dashboardRow {
+  align-items: flex-end;
 }
 
 .row {
@@ -20,6 +46,72 @@
       padding-bottom: 10px;
     }
   }
+
+  .title {
+    font-weight: bold;
+  }
+  .error {
+      font-weight: bold;
+      color: #BE405E;
+  }
+  .active {
+    color: #008000;
+    text-transform: uppercase;
+  }
+  .inactive {
+    color: #BE405E;
+  }
+
+  .field {
+    @include upto-sm {
+      display: block;
+      padding-bottom: 10px;
+    }
+
+    label {
+      @include roboto-bold();
+
+      font-size: 16px;
+      line-height: 19px;
+      font-weight: 500;
+      color: $tc-gray-80;
+    }
+
+    &.input1 {
+      max-width: 185px;
+      min-width: 185px;
+      margin-right: 14px;
+      white-space: nowrap;
+      display: flex;
+      align-items: center;
+      flex-grow: 1;
+
+      span {
+        color: $tc-red;
+      }
+    }
+
+    &.input2.error {
+      color: $tc-red;
+      margin-top: -25px;
+    }
+    &.input2 {
+      align-self: flex-end;
+      width: 50%;
+      margin-bottom: auto;
+      margin-top: auto;
+      display: flex;
+      flex-direction: row;
+      max-width: 500px;
+      min-width: 500px;
+    }
+
+    &.manageLink {
+      margin: 2px 12px;
+      text-decoration: none;
+      font-size: 12px;
+    }
+  }
 }
 
 .header {
@@ -28,45 +120,83 @@
   display: flex;
   justify-content: flex-start;
   padding: 0 20px;
+  font-size: 14px;
+
+  gap: 30px;
+
+  .sortable {
+    display: flex;
+    cursor: pointer;
+  }
 
   .col1 {
     display: flex;
-    justify-content: flex-start;
-    align-items: center;
-    flex: 6;
+    flex: 1;
+    flex-direction: column;
+    justify-content: center;
   }
 
   .col2 {
     display: flex;
-    justify-content: center;
-    align-items: center;
     flex: 2;
+    flex-direction: column;
+    justify-content: center;
   }
 
   .col3 {
     display: flex;
-    justify-content: flex-start;
-    align-items: center;
-    flex: 2;
+    flex: 1;
+    flex-direction: column;
+    justify-content: center;
   }
 
   .col4 {
     display: flex;
-    justify-content: flex-start;
-    align-items: center;
-    flex: 2;
+    width: 30px;
+    flex-direction: column;
+    justify-content: center;
   }
+
+  .col5 {
+    display: flex;
+    width: 80px;
+    flex-direction: column;
+    justify-content: center;
+  }
+
+  .col6 {
+    display: flex;
+    width: 40px;
+    flex-direction: column;
+    justify-content: center;
+  }
+}
+
+.challengeInput {
+  width: 60% !important;
+  max-width: 230px !important;
+}
+
+.searchInputWrapper {
+  display: flex;
+}
+
+.resetFilter {
+  margin-left: 35px;
 }
 
 @-moz-document url-prefix() {
   .challengeInput {
-    &::-moz-placeholder { /* Mozilla Firefox 19+ */
+    &::-moz-placeholder {
+      /* Mozilla Firefox 19+ */
       line-height: 38px;
     }
-    &::-webkit-input-placeholder { /* Webkit */
+    &::-webkit-input-placeholder {
+      /* Webkit */
       line-height: 38px;
     }
-    &:-ms-input-placeholder { /* IE */
+    &:-ms-input-placeholder {
+      /* IE */
       line-height: 38px;
     }
   }
@@ -98,11 +228,169 @@
 
 .challengeItem {
   list-style: none;
-  height: 83px;
   width: 100%;
   border-top: 1px $gray solid;
+  padding: 10px 0;
+  font-size: 14px;
 
   a {
     text-decoration: none;
   }
+}
+
+.footer {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 30px;
+}
+
+.perPageContainer {
+  margin-right: 20px;
+  max-width: 150px;
+}
+
+.paginationContainer {
+  display: flex;
+}
+
+.modalContainer {
+  padding: 0;
+  position: fixed;
+  overflow: auto;
+  z-index: 10000;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  box-sizing: border-box;
+  width: auto;
+  max-width: none;
+  transform: none;
+  background: transparent;
+  color: $text-color;
+  opacity: 1;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+
+  :global {
+    button.close {
+      margin-right: 5px;
+      margin-top: 5px;
+    }
+  }
+
+  .contentContainer {
+    box-sizing: border-box;
+    background: $white;
+    opacity: 1;
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-start;
+    align-items: center;
+    border-radius: 6px;
+    margin: 0 auto;
+    width: 852px;
+    padding: 30px;
+
+    .content {
+      padding: 30px;
+      width: 100%;
+      height: 100%;
+    }
+
+    .title {
+      @include roboto-bold();
+
+      font-size: 30px;
+      line-height: 36px;
+      margin-bottom: 30px;
+      margin-top: 0;
+    }
+
+    span {
+      @include roboto;
+
+      font-size: 22px;
+      font-weight: 400;
+      line-height: 26px;
+    }
+
+    &.confirm {
+      width: 999px;
+
+      .buttonGroup {
+        display: flex;
+        justify-content: space-between;
+        margin-top: 30px;
+
+        .buttonSizeA {
+          width: 193px;
+          height: 40px;
+          margin-right: 33px;
+
+          span {
+            font-size: 18px;
+            font-weight: 500;
+          }
+        }
+
+        .buttonSizeB {
+          width: 160px;
+          height: 40px;
+
+          span {
+            font-size: 18px;
+            font-weight: 500;
+            line-height: 22px;
+          }
+        }
+      }
+    }
+
+    .buttonGroup {
+      display: flex;
+      justify-content: space-between;
+      margin-top: 30px;
+
+      .button {
+        width: 135px;
+        height: 40px;
+        margin-right: 66px;
+
+        span {
+          font-size: 18px;
+          font-weight: 500;
+        }
+      }
+
+      .button:last-child {
+        margin-right: 0;
+      }
+    }
+  }
+}
+
+.sortIcon {
+  width: 14px;
+  height: 12px;
+  margin-left: 5px;
+  margin-top: 2px;
+  height: 100%;
+
+  &.asc {
+    transform: rotate(180deg);
+  }
+}
+
+.filterItem {
+  display: flex;
+}
+
+.to {
+  margin: 0 10px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
 }

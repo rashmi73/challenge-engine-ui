@@ -1,138 +1,68 @@
-@import "../../../styles/includes";
+@use '../../../styles/includes' as *;
 
 .item {
-  width: 100%;
   display: flex;
-  justify-content: space-between;
-  font-size: 16px;
+  font-size: 14px;
+  gap: 30px;
   height: 100%;
+  padding: 0 20px;
+
   .editingContainer {
     display: none;
   }
   .iconsContainer {
     display: flex;
   }
-  &:hover {@import "../../../styles/includes";
 
-    .item {
-      width: 100%;
-      display: flex;
-      justify-content: space-between;
-      font-size: 16px;
-      height: 100%;
-      &:hover {
-        cursor: pointer;
-        background-color: $lighter-gray;
-      }
+  .col1 {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    justify-content: center;
+  }
 
-      .block {
-        color: $text-color;
-      }
+  .col2 {
+    display: flex;
+    flex: 2;
+    flex-direction: column;
+    justify-content: center;
 
-      .light-text {
-        color: $light-text;
-      }
-
-      .linkGroup {
-        display: flex;
-        justify-content: space-between;
-        width: 100%;
-        padding-left: 20px;
-        padding-right: 20px;
-
-        .link,
-        .link:hover,
-        .link:visited {
-          color: $status-blue;
-          margin: 0;
-          text-decoration-line: underline;
-        }
-
-        &.onlyOne {
-          justify-content: center;
-        }
-      }
-
-
+    span {
+      word-break: break-all;
     }
+  }
 
-    .icon {
-      vertical-align: bottom;
-    }
+  .col3 {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    justify-content: center;
+  }
 
-    .faIcon {
-      color: $gray;
-      margin-right: 10px;
-      margin-left: 20px;
-    }
+  .col4 {
+    display: flex;
+    width: 30px;
+    flex-direction: column;
+    justify-content: center;
+  }
 
-    .faIconContainer {
-      flex:1;
-      width: 100%;
-      display: flex;
-      justify-items: flex-end;
-      align-items: center;
+  .col5 {
+    display: flex;
+    width: 80px;
+    flex-direction: column;
+    justify-content: center;
+  }
 
-      span {
-        flex-grow: 1;
-        flex-shrink: 0;
-        color: $text-color;
-      }
-    }
-
-    .col1 {
-      flex: 6;
-      flex-wrap: nowrap;
-      display: flex;
-
-      .name {
-        flex:1;
-        display: flex;
-        flex-direction: column;
-      }
-
-      align-items: center;
-      padding-left: 20px;
-    }
-
-    .col2 {
-      flex: 2;
-      display: flex;
-      flex-direction: column;
-      justify-content: center;
-      align-items: center;
-    }
-
-    .col3 {
-      flex: 2;
-      display: flex;
-      flex-direction: column;
-      justify-content: center;
-    }
-
-    .col4 {
-      flex: 2;
-      display: flex;
-      flex-wrap: wrap;
-      width: 100%;
-      align-items: center;
-      padding-right: 20px;
-      justify-content: center;
-    }
-
-    cursor: pointer;
-    background-color: $lighter-gray;
-
-    .editingContainer {
-      display: flex;
-    }
-    .iconsContainer {
-      display: none;
-    }
+  .col6 {
+    display: flex;
+    width: 40px;
+    flex-direction: column;
+    justify-content: center;
   }
 
   .block {
     color: $text-color;
+    word-break: break-all;
   }
 
   .light-text {
@@ -145,6 +75,8 @@
     width: 100%;
     padding-left: 20px;
     padding-right: 20px;
+    height: 100%;
+    align-items: center;
 
     .link,
     .link:hover,
@@ -154,8 +86,58 @@
       text-decoration-line: underline;
     }
 
+    span.link,
+    span.link:hover,
+    span.link:visited {
+      color: $inactive;
+      cursor: default;
+    }
+
     &.onlyOne {
       justify-content: center;
+    }
+
+    .linkGroupLeft {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      height: 100%;
+      justify-content: center;
+
+      span.linkDivider {
+        margin: 0 5px;
+      }
+
+      .linkGroupLeftBottom {
+        a,
+        span {
+          font-size: 12px;
+        }
+
+        span.linkDivider {
+          font-size: 16px;
+        }
+      }
+    }
+  }
+
+  .createdAt {
+    color: $gray;
+    font-size: 10px;
+
+    &:hover {
+      text-decoration: none;
+    }
+  }
+
+  .lastUpdated {
+    text-decoration: none;
+    .lastUpdatedAt {
+      color: $tc-black;
+    }
+    .lastUpdatedBy {
+      color: $gray;
+      font-size: 10px;
     }
   }
 }
@@ -183,6 +165,39 @@
     align-items: center;
     color: $status-green;
   }
+
+  &.activateButtonDisabled {
+    border-color: $inactive;
+    cursor: default;
+
+    > span {
+      color: $inactive;
+    }
+  }
+}
+
+.deleteButton {
+  height: 22px;
+  width: 86px;
+  border-radius: 11.5px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  border-color: $tc-red;
+  cursor: pointer;
+
+  span {
+    @include roboto;
+
+    font-size: 14px;
+    font-weight: 400;
+    line-height: 17px;
+    color: $tc-red;
+    text-transform: capitalize;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+  }
 }
 
 .icon {
@@ -207,54 +222,6 @@
     flex-shrink: 0;
     color: $text-color;
   }
-}
-
-.col1 {
-  flex: 6;
-  flex-wrap: nowrap;
-  display: flex;
-
-  .name {
-    flex:1;
-    display: flex;
-    flex-direction: column;
-  }
-
-  align-items: center;
-  padding-left: 20px;
-}
-
-.col2 {
-  flex: 2;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  align-items: center;
-
-  .statusText {
-    color: $text-color;
-    font-size: 14px;
-    overflow-wrap: break-word;
-    word-wrap: break-word;
-    //hyphens: auto;
-    max-width: 100px;
-  }
-}
-
-.col3 {
-  flex: 2;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-}
-
-.col4 {
-  flex: 2;
-  display: flex;
-  flex-wrap: wrap;
-  width: 100%;
-  align-items: center;
-  padding-right: 20px;
 }
 
 .modalContainer {

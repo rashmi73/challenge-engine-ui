@@ -4,78 +4,25 @@
 import _ from 'lodash'
 import React from 'react'
 import PropTypes from 'prop-types'
-import cn from 'classnames'
 import { withRouter, Link } from 'react-router-dom'
 import moment from 'moment'
 import 'moment-duration-format'
-import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faFile, faUser } from '@fortawesome/free-solid-svg-icons'
 import ChallengeStatus from '../ChallengeStatus'
-import Modal from '../../Modal'
 import ChallengeTag from '../ChallengeTag'
 import styles from './ChallengeCard.module.scss'
-import { getFormattedDuration } from '../../../util/date'
-import { CHALLENGE_STATUS, COMMUNITY_APP_URL } from '../../../config/constants'
-import { OutlineButton, PrimaryButton } from '../../Buttons'
-import { patchChallenge } from '../../../services/challenges'
+import { formatDate } from '../../../util/date'
+import { CHALLENGE_STATUS, COMMUNITY_APP_URL, DIRECT_PROJECT_URL, REVIEW_APP_URL, PROJECT_ROLES } from '../../../config/constants'
+import ConfirmationModal from '../../Modal/ConfirmationModal'
+import { checkChallengeEditPermission, checkReadOnlyRoles } from '../../../util/tc'
+import { getCurrentPhase } from '../../../util/phase'
+import AlertModal from '../../Modal/AlertModal'
 
 const theme = {
   container: styles.modalContainer
 }
 
-const STALLED_MSG = 'Stalled'
-const DRAFT_MSG = 'In Draft'
-const STALLED_TIME_LEFT_MSG = 'Challenge is currently on hold'
-const FF_TIME_LEFT_MSG = 'Winner is working on fixes'
-
-/**
- * Format the remaining time of a challenge phase
- * @param phase Challenge phase
- * @param status Challenge status
- * @returns {*}
- */
-const getTimeLeft = (phase, status) => {
-  if (!phase) return STALLED_TIME_LEFT_MSG
-  if (phase.phaseType === 'Final Fix') {
-    return FF_TIME_LEFT_MSG
-  }
-
-  let time = moment(phase.scheduledEndTime).diff()
-  const late = time < 0
-  if (late) time = -time
-
-  if (status !== CHALLENGE_STATUS.COMPLETED) {
-    const duration = getFormattedDuration(time)
-    return late ? `Late by ${duration}` : `${duration} to go`
-  }
-
-  return moment(phase.scheduledEndTime).format('DD/MM/YYYY')
-}
-
-/**
- * Find current phase and remaining time of it
- * @param c Challenge
- * @returns {{phaseMessage: string, endTime: {late, text}}}
- */
-const getPhaseInfo = (c) => {
-  const { allPhases, currentPhases, subTrack, status } = c
-  let checkPhases = (currentPhases && currentPhases.length > 0 ? currentPhases : allPhases)
-  if (_.isEmpty(checkPhases)) checkPhases = []
-  let statusPhase = checkPhases
-    .filter(p => p.phaseType !== 'Registration')
-    .sort((a, b) => moment(a.scheduledEndTime).diff(b.scheduledEndTime))[0]
-
-  if (!statusPhase && subTrack === 'FIRST_2_FINISH' && checkPhases.length) {
-    statusPhase = Object.clone(checkPhases[0])
-    statusPhase.phaseType = 'Submission'
-  }
-  let phaseMessage = STALLED_MSG
-  if (statusPhase) phaseMessage = statusPhase.phaseType
-  else if (status === 'DRAFT') phaseMessage = DRAFT_MSG
-
-  const endTime = getTimeLeft(statusPhase)
-  return { phaseMessage, endTime }
-}
+const PERMISSION_DELETE_MESSAGE_ERROR =
+  "You don't have permission to delete this challenge"
 
 /**
  * Render components when mouse hover
@@ -83,32 +30,61 @@ const getPhaseInfo = (c) => {
  * @param onUpdateLaunch
  * @returns {*}
  */
-const hoverComponents = (challenge, onUpdateLaunch) => {
-  switch (challenge.status.toUpperCase()) {
-    case CHALLENGE_STATUS.DRAFT:
-    case CHALLENGE_STATUS.ACTIVE:
-    default:
-      return (
-        <div className={styles.linkGroup}>
-          <Link className={styles.link} to={`/projects/${challenge.projectId}/challenges/${challenge.id}/edit`}>Edit</Link>
-          {
-            challenge.status === 'Draft' && (
-              <button className={styles.activateButton} onClick={() => onUpdateLaunch()}>
-                <span>Activate</span>
-              </button>
-            )
-          }
-        </div>
-      )
+const hoverComponents = (challenge, onUpdateLaunch, deleteModalLaunch) => {
+  const communityAppUrl = `${COMMUNITY_APP_URL}/challenges/${challenge.id}`
+  const directUrl = `${DIRECT_PROJECT_URL}/contest/detail?projectId=${challenge.legacyId}`
+  const reviewUrl = `${REVIEW_APP_URL}/active-challenges/${challenge.id}/challenge-details`
+  const isTask = _.get(challenge, 'task.isTask', false)
+
+  // NEW projects never have Legacy challenge created, so don't show links and "Activate" button for them at all
+  if (challenge.status.toUpperCase() === CHALLENGE_STATUS.NEW) {
+    return (
+      <button className={styles.deleteButton} onClick={deleteModalLaunch}>
+        <span>Delete</span>
+      </button>
+    )
   }
+
+  const showLegacyLinks = Boolean(challenge.legacyId) && !isTask
+
+  return (
+    <div className={styles.linkGroup}>
+      <div className={styles.linkGroupLeft}>
+        <a className={styles.link} href={communityAppUrl} target='_blank'>View Challenge</a>
+        {showLegacyLinks && (
+          <div className={styles.linkGroupLeftBottom}>
+            <a className={styles.link} href={directUrl} target='_blank'>Direct</a>
+            <span className={styles.linkDivider}>|</span>
+            <a className={styles.link} href={reviewUrl} target='_blank'>Review</a>
+          </div>
+        )}
+      </div>
+      {challenge.status.toUpperCase() === CHALLENGE_STATUS.DRAFT && (
+        <button className={styles.activateButton} onClick={() => onUpdateLaunch()}>
+          <span>Activate</span>
+        </button>
+      )}
+    </div>
+  )
 }
 
-const renderStatus = (status) => {
-  switch (status) {
+const renderStatus = (status, getStatusText) => {
+  const normalizedStatus = (status || '').toUpperCase()
+  const statusMessage = normalizedStatus.split(' ')[0]
+  const isCancelledStatus = statusMessage.startsWith(CHALLENGE_STATUS.CANCELLED)
+
+  if (isCancelledStatus) {
+    return (<ChallengeStatus status={statusMessage} statusText='Cancelled' />)
+  }
+
+  switch (statusMessage) {
     case CHALLENGE_STATUS.ACTIVE:
+    case CHALLENGE_STATUS.APPROVED:
+    case CHALLENGE_STATUS.NEW:
     case CHALLENGE_STATUS.DRAFT:
     case CHALLENGE_STATUS.COMPLETED:
-      return (<ChallengeStatus status={status} />)
+      const statusText = getStatusText ? getStatusText(statusMessage) : statusMessage
+      return (<ChallengeStatus status={statusMessage} statusText={statusText} />)
     default:
       return (<span className={styles.statusText}>{status}</span>)
   }
@@ -120,12 +96,42 @@ class ChallengeCard extends React.Component {
     this.state = {
       isConfirm: false,
       isLaunch: false,
-      isSaving: false
+      isDeleteLaunch: false,
+      isSaving: false,
+      isCheckChalengePermission: false,
+      hasEditChallengePermission: false,
+      loginUserRoleInProject: '',
+      currentPhase: getCurrentPhase(props.challenge),
+      forumLink: this.getForumLink(props.challenge)
     }
     this.onUpdateConfirm = this.onUpdateConfirm.bind(this)
     this.onUpdateLaunch = this.onUpdateLaunch.bind(this)
+    this.onDeleteChallenge = this.onDeleteChallenge.bind(this)
+    this.deleteModalLaunch = this.deleteModalLaunch.bind(this)
     this.resetModal = this.resetModal.bind(this)
     this.onLaunchChallenge = this.onLaunchChallenge.bind(this)
+    this.openChallengeView = this.openChallengeView.bind(this)
+  }
+
+  getForumLink (challenge) {
+    const discussionsHaveUrls = (challenge.discussions || []).filter((p) => !!p.url)
+    return discussionsHaveUrls.length ? discussionsHaveUrls[0].url : ''
+  }
+
+  componentDidUpdate (prevProps) {
+    const { challenge } = this.props
+    if (!_.isEqual(challenge.phases, prevProps.challenge.phases)) {
+      // eslint-disable-next-line react/no-did-update-set-state
+      this.setState({
+        currentPhase: getCurrentPhase(challenge)
+      })
+    }
+    if (!_.isEqual(challenge.discussions, prevProps.challenge.discussions)) {
+      // eslint-disable-next-line react/no-did-update-set-state
+      this.setState({
+        forumLink: this.getForumLink(challenge)
+      })
+    }
   }
 
   onUpdateConfirm (value) {
@@ -134,98 +140,202 @@ class ChallengeCard extends React.Component {
 
   onUpdateLaunch () {
     if (!this.state.isLaunch) {
-      this.setState({ isLaunch: true })
+      if (!this.props.isBillingAccountExpired) {
+        this.setState({ isLaunch: true })
+      } else {
+        this.setState({ isLaunch: true, error: 'Unable to activate challenge as Billing Account is not active.' })
+      }
+    }
+  }
+
+  deleteModalLaunch () {
+    const { challenge } = this.props
+    if (!this.state.isDeleteLaunch) {
+      checkChallengeEditPermission(challenge.id).then(hasPermission => {
+        this.setState({
+          isCheckChalengePermission: false,
+          hasEditChallengePermission: hasPermission
+        })
+      })
+      this.setState({
+        isDeleteLaunch: true,
+        isCheckChalengePermission: true,
+        hasEditChallengePermission: false
+      })
     }
   }
 
   resetModal () {
-    this.setState({ isConfirm: false, isLaunch: false })
+    this.setState({ isConfirm: false, isLaunch: false, isDeleteLaunch: false })
   }
 
   async onLaunchChallenge () {
+    const { partiallyUpdateChallengeDetails } = this.props
     if (this.state.isSaving) return
     const { challenge } = this.props
     try {
       this.setState({ isSaving: true })
-      const response = await patchChallenge(challenge.id, { status: 'Active' })
-      this.setState({ isLaunch: true, isConfirm: response.data.id, isSaving: false })
+      const isTask = _.get(challenge, 'task.isTask', false)
+      const payload = {
+        status: CHALLENGE_STATUS.ACTIVE
+      }
+      if (isTask) {
+        payload.startDate = moment().format()
+      }
+      // call action to update the challenge with a new status
+      await partiallyUpdateChallengeDetails(challenge.id, payload)
+      this.setState({ isLaunch: true, isConfirm: challenge.id, isSaving: false })
     } catch (e) {
-      this.setState({ isSaving: false })
+      const error = _.get(e, 'response.data.message', 'Unable to activate the challenge')
+      this.setState({ isSaving: false, error })
     }
   }
 
+  async onDeleteChallenge () {
+    const { deleteChallenge, challenge } = this.props
+    try {
+      this.setState({ isSaving: true })
+      // Call action to delete the challenge
+      await deleteChallenge(challenge.id)
+      this.setState({ isSaving: false })
+      this.resetModal()
+    } catch (e) {
+      const error = _.get(e, 'response.data.message', 'Unable to Delete the challenge')
+      this.setState({ isSaving: false, error })
+    }
+  }
+
+  openChallengeView (challenge) {
+    this.props.setActiveProject(parseInt(challenge.projectId))
+    this.props.resetFilter()
+  }
+
   render () {
-    const { isLaunch, isConfirm, isSaving } = this.state
-    const { challenge } = this.props
-    const { phaseMessage, endTime } = getPhaseInfo(challenge)
+    const { isLaunch, isConfirm, isSaving, isDeleteLaunch, isCheckChalengePermission, hasEditChallengePermission, currentPhase, forumLink } = this.state
+    const { challenge, reloadChallengeList, isBillingAccountExpired, disableHover, getStatusText, challengeTypes, loginUserRoleInProject } = this.props
+    const deleteMessage = isCheckChalengePermission
+      ? 'Checking permissions...'
+      : `Do you want to delete "${challenge.name}"?`
+    const reviewUrl = `${REVIEW_APP_URL}/active-challenges/${challenge.id}/challenge-details`
+    const communityAppUrl = `${COMMUNITY_APP_URL}/challenges/${challenge.id}`
+    const isReadOnly = checkReadOnlyRoles(this.props.auth.token) || loginUserRoleInProject === PROJECT_ROLES.READ
+
     return (
       <div className={styles.item}>
-        { isLaunch && !isConfirm && (
-          <Modal theme={theme}>
-            <div className={styles.contentContainer}>
-              <div className={styles.title}>Launch Challenge Confirmation</div>
-              <span>{`Do you want to launch ${challenge.type} challenge "${challenge.name}"?`}</span>
-              <div className={styles.buttonGroup}>
-                <div className={styles.button}>
-                  <OutlineButton className={cn({ disabled: isSaving })} text={'Cancel'} type={'danger'} onClick={() => this.resetModal()} />
-                </div>
-                <div className={styles.button}>
-                  <PrimaryButton text={isSaving ? 'Launching...' : 'Confirm'} type={'info'} onClick={() => this.onLaunchChallenge()} />
-                </div>
-              </div>
-            </div>
-          </Modal>
+        {isDeleteLaunch && !isConfirm && (
+          <ConfirmationModal
+            title='Confirm Delete'
+            message={deleteMessage}
+            theme={theme}
+            isProcessing={isSaving}
+            disableConfirmButton={!hasEditChallengePermission}
+            errorMessage={
+              !isCheckChalengePermission && !hasEditChallengePermission
+                ? PERMISSION_DELETE_MESSAGE_ERROR
+                : this.state.error
+            }
+            onCancel={this.resetModal}
+            onConfirm={this.onDeleteChallenge}
+          />
+        )}
+        {isLaunch && !isConfirm && (
+          <ConfirmationModal
+            title='Confirm Launch'
+            message={`Do you want to launch "${challenge.name}"?`}
+            theme={theme}
+            isProcessing={isSaving}
+            errorMessage={this.state.error}
+            onCancel={this.resetModal}
+            onConfirm={this.onLaunchChallenge}
+            disableConfirmButton={isBillingAccountExpired}
+          />
         )
         }
-        { isLaunch && isConfirm && (
-          <Modal theme={theme}>
-            <div className={cn(styles.contentContainer, styles.confirm)}>
-              <div className={styles.title}>Success</div>
-              <span>Your challenge is saved as active</span>
-              <div className={styles.buttonGroup}>
-                <div className={styles.buttonSizeA}>
-                  <PrimaryButton text={'Back to Dashboard'} type={'info'} link={'/'} />
-                </div>
-                <div className={styles.buttonSizeA} onClick={() => this.resetModal()}>
-                  <OutlineButton text={'View Challenge'} type={'success'} link={`/projects/${challenge.projectId}/challenges/${isConfirm}/edit`} />
-                </div>
-              </div>
-            </div>
-          </Modal>
-        ) }
-        <a className={styles.col1} href={`${COMMUNITY_APP_URL}/challenges/${challenge.id}`}>
-          <div className={styles.name}>
-            <span className={styles.block}>{challenge.name}</span>
-            <ChallengeTag track={challenge.track} challengeType={challenge.type} />
-          </div>
-        </a>
-        <a className={styles.col2} href={`${COMMUNITY_APP_URL}/challenges/${challenge.id}`}>
-          {renderStatus(challenge.status.toUpperCase())}
-        </a>
-        <a className={styles.col3} href={`${COMMUNITY_APP_URL}/challenges/${challenge.id}`}>
-          <span className={styles.block}>{phaseMessage}</span>
-          <span className='block light-text'>{endTime}</span>
-        </a>
-        <div className={cn(styles.col4, styles.editingContainer)}>
-          {hoverComponents(challenge, this.onUpdateLaunch)}
+        {isLaunch && isConfirm && (
+          <AlertModal
+            title='Success'
+            message={`Challenge "${challenge.name}" is activated successfully`}
+            theme={theme}
+            onCancel={reloadChallengeList}
+            closeText='Close'
+            okText='View Challenge'
+            okLink={`/projects/${challenge.projectId}/challenges/${challenge.id}/view`}
+            onClose={this.resetModal}
+          />
+        )}
+
+        <div className={styles.col5}>
+          <ChallengeTag
+            type={typeof challenge.type === 'string' ? challenge.type : (challenge.type && challenge.type.name)}
+            challengeTypes={challengeTypes}
+          />
         </div>
-        <div className={cn(styles.col4, styles.iconsContainer)}>
-          <div className={styles.faIconContainer}>
-            <FontAwesomeIcon icon={faUser} className={styles.faIcon} />
-            <span>{challenge.numRegistrants || 0}</span>
+
+        <Link className={styles.col2} to={`/projects/${challenge.projectId}/challenges/${challenge.id}/view`} onClick={() => this.openChallengeView(challenge)}>
+          <div className={styles.name}>
+            <span className={styles.link}>{challenge.name}</span>
           </div>
-          <div className={styles.faIconContainer}>
-            <FontAwesomeIcon icon={faFile} className={styles.faIcon} />
-            <span>{challenge.numSubmissions || 0}</span>
-          </div>
+        </Link>
+        <div className={styles.col3}>
+          <span>{formatDate(challenge.startDate)}</span>
+        </div>
+        <div className={styles.col3}>
+          <span>{formatDate(challenge.endDate)}</span>
+        </div>
+        <div className={styles.col4}>
+          <span>{challenge.numOfRegistrants}</span>
+        </div>
+        <div className={styles.col4}>
+          <span>{challenge.numOfSubmissions}</span>
+        </div>
+        <div className={styles.col3}>
+          {renderStatus(challenge.status.toUpperCase(), getStatusText)}
+        </div>
+        <div className={styles.col3}>
+          {currentPhase}
+        </div>
+        {
+          !isReadOnly && (
+            <div className={styles.col6}>
+              {(disableHover ? <Link className={styles.link} to={`/projects/${challenge.projectId}/challenges/${challenge.id}/edit`} onClick={() => this.props.resetFilter()}>Edit</Link> : hoverComponents(challenge, this.onUpdateLaunch, this.deleteModalLaunch))}
+            </div>
+          )
+        }
+        <div className={styles.col6}>
+          <a className={styles.link} href={reviewUrl} target='_blank'>Review</a>
+        </div>
+        <div className={styles.col6}>
+          <a className={styles.link} href={communityAppUrl} target='_blank'>CA</a>
+        </div>
+        <div className={styles.col6}>
+          {forumLink ? (<a className={styles.link} href={forumLink} target='_blank'>Forum</a>)
+            : (<a className={styles.link} href='javascript:void(0)'>Forum</a>)}
         </div>
       </div>
     )
   }
 }
 
+ChallengeCard.defaultPrps = {
+  reloadChallengeList: () => { },
+  challengeTypes: [],
+  setActiveProject: () => {},
+  loginUserRoleInProject: ''
+}
+
 ChallengeCard.propTypes = {
-  challenge: PropTypes.object
+  challenge: PropTypes.object,
+  reloadChallengeList: PropTypes.func,
+  partiallyUpdateChallengeDetails: PropTypes.func.isRequired,
+  setActiveProject: PropTypes.func,
+  deleteChallenge: PropTypes.func.isRequired,
+  isBillingAccountExpired: PropTypes.bool,
+  disableHover: PropTypes.bool,
+  getStatusText: PropTypes.func,
+  challengeTypes: PropTypes.arrayOf(PropTypes.shape()),
+  auth: PropTypes.object.isRequired,
+  loginUserRoleInProject: PropTypes.string,
+  resetFilter: PropTypes.func
 }
 
 export default withRouter(ChallengeCard)

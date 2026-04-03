@@ -1,0 +1,85 @@
+@use '../../styles/includes' as *;
+
+.projectSearch {
+  padding: 20px 20px 0px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+
+  .projectSearchHeader {
+    display: flex;
+
+    label {
+      line-height: 40px;
+      margin-right: 10px;
+    }
+  }
+  .buttonNewProjectWrapper {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 10px;
+    margin-top: auto;
+    align-items: center;
+    .buttonNewProject {
+      min-width: 169px;
+      height: 40px;
+      text-decoration: none;
+      
+      :global {
+        span {
+          margin: 0 20px;
+        }
+      }
+    }
+  }
+
+  ul {
+    background-color: $lighter-gray;
+    list-style: none;
+    width: 100%;
+    padding: 0;
+    margin-top: 0;
+    border-radius: 3px;
+    flex: 1;
+
+    li {
+      cursor: pointer;
+    }
+  }
+
+  input[type="text"] {
+    flex: 2;
+  }
+
+  input[type="checkbox"] {
+    margin-left: 20px;
+    margin-right: 10px;
+    height: 40px;
+  }
+
+  a {
+    color: $dark-gray;
+    text-decoration: none;
+  }
+
+  .noProjects {
+    @include roboto;
+    font-weight: 400;
+    padding-left: 30px;
+    padding-right: 20px;
+    color: $white;
+  }
+}
+
+.blockNoProjectSelected {
+  display: flex;
+  gap: 20px;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.buttonCreateNewTaaS {
+  min-width: 169px;
+  height: 40px;
+  text-decoration: none;
+}

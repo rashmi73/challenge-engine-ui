@@ -1,4 +1,4 @@
-@import "../../styles/includes";
+@use '../../styles/includes' as *;
 
 .container {
   width: 100%;
@@ -40,12 +40,17 @@
     line-height: 29px;
 
     width: 177px;
+    flex: 1;
     overflow: hidden;
     white-space: nowrap;
     text-overflow: ellipsis;
-    //display: flex;
-    //justify-content: space-between;
-    //align-items: center;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+
+    .status {
+      opacity: 0.7;
+    }
   }
 
   .icon {

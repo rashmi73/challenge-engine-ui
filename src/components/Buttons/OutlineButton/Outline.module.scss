@@ -1,4 +1,4 @@
-@import "../../../styles/includes";
+@use '../../../styles/includes' as *;
 
 .container {
   @include roboto-bold();
@@ -41,14 +41,21 @@
     }
   }
 
-  &.disable {
+  &.disable,
+  &[disabled] {
     @include roboto-light();
     font-weight: 300;
-
     border: 1px solid $tc-gray-40;
+    cursor: default;
 
     span {
       color: $tc-gray-40;
     }
+  }
+
+  &.minWidth {
+    width: min-content;
+    padding-left: 16px;
+    padding-right: 16px;
   }
 }

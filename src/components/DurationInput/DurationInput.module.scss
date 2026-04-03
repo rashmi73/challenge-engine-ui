@@ -1,0 +1,28 @@
+@use '../../styles/includes' as *;
+
+.container {
+  display: flex;
+  align-items: center;
+  font-size: 14px;
+  font-weight: 300;
+  gap: 10px;
+}
+
+.durationInput {
+  flex-shrink: 0;
+
+  &:disabled {
+    cursor: not-allowed !important;
+    background-color: $inactive !important;
+  }
+
+  &::-webkit-outer-spin-button,
+  &::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+
+  &[type=number] {
+    -moz-appearance: textfield;
+  }
+}

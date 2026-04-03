@@ -1,19 +1,52 @@
 import _ from 'lodash'
+import * as queryString from 'query-string'
 import React, { Component } from 'react'
 import PropTypes from 'prop-types'
 import { Helmet } from 'react-helmet'
 import cn from 'classnames'
-import moment from 'moment'
+import moment from 'moment-timezone'
 import { pick } from 'lodash/fp'
-import Modal from '../Modal'
-import { VALIDATION_VALUE_TYPE } from '../../config/constants'
+import { withRouter } from 'react-router-dom'
+import { toastr } from 'react-redux-toastr'
+import {
+  VALIDATION_VALUE_TYPE,
+  PRIZE_SETS_TYPE,
+  DEFAULT_TERM_UUID,
+  DEFAULT_NDA_UUID,
+  SUBMITTER_ROLE_UUID,
+  CREATE_FORUM_TYPE_IDS,
+  MESSAGE,
+  COMMUNITY_APP_URL,
+  DES_TRACK_ID,
+  DEV_TRACK_ID,
+  CHALLENGE_TYPE_ID,
+  MARATHON_TYPE_ID,
+  REVIEW_TYPES,
+  MILESTONE_STATUS,
+  PHASE_PRODUCT_CHALLENGE_ID_FIELD,
+  QA_TRACK_ID, DESIGN_CHALLENGE_TYPES, ROUND_TYPES,
+  MULTI_ROUND_CHALLENGE_TEMPLATE_ID,
+  CHALLENGE_STATUS,
+  SKILLS_OPTIONAL_BILLING_ACCOUNT_IDS,
+  AI_SCREENING_PHASE_NAME
+} from '../../config/constants'
+import {
+  getDomainTypes,
+  getResourceRoleByName,
+  is2RoundsChallenge,
+  checkCopilot
+} from '../../util/tc'
+import { getPhaseEndDate } from '../../util/date'
 import { PrimaryButton, OutlineButton } from '../Buttons'
 import TrackField from './Track-Field'
 import TypeField from './Type-Field'
+import RoundTypeField from './RoundType-Field'
+import ChallengeTypeField from './ChallengeType-Field'
 import ChallengeNameField from './ChallengeName-Field'
 import CopilotField from './Copilot-Field'
 import ReviewTypeField from './ReviewType-Field'
 import TermsField from './Terms-Field'
+import NDAField from './NDAField'
 import GroupsField from './Groups-Field'
 import CopilotFeeField from './CopilotFee-Field'
 import ChallengeTotalField from './ChallengeTotal-Field'
@@ -24,19 +57,38 @@ import Loader from '../Loader'
 import ChallengeScheduleField from './ChallengeSchedule-Field'
 import { convertDollarToInteger, validateValue } from '../../util/input-check'
 import dropdowns from './mock-data/dropdowns'
+import LastSavedDisplay from './LastSaved-Display'
 import styles from './ChallengeEditor.module.scss'
-import { createChallenge, updateChallenge, createResource, deleteResource } from '../../services/challenges'
+import Track from '../Track'
+import ConfirmationModal from '../Modal/ConfirmationModal'
+import AlertModal from '../Modal/AlertModal'
+import PhaseInput from '../PhaseInput'
+import { hasAiReviewers } from './ChallengeReviewer-Field/AiReviewerTab/utils'
+import LegacyLinks from '../LegacyLinks'
+import AssignedMemberField from './AssignedMember-Field'
+import Tooltip from '../Tooltip'
+import CancelDropDown from './Cancel-Dropdown'
+import UseSchedulingAPIField from './UseSchedulingAPIField'
+import FunChallengeField from './FunChallengeField'
+import WiproAllowedField from './WiproAllowedField'
+
+import MilestoneField from './Milestone-Field'
+import DiscussionField from './Discussion-Field'
+import CheckpointPrizesField from './CheckpointPrizes-Field'
+import { canChangeDuration } from '../../util/phase'
+import { isBetaMode } from '../../util/localstorage'
+import { fetchAIReviewConfigByChallenge } from '../../services/aiReviewConfigs'
 
 const theme = {
   container: styles.modalContainer
 }
 
-const getTitle = (isNew) => {
+const getTitle = (isNew, challenge) => {
   if (isNew) {
     return 'Create New Challenge'
   }
 
-  return 'Edit Challenge'
+  return challenge.name || 'Set-Up Work'
 }
 
 class ChallengeEditor extends Component {
@@ -44,58 +96,145 @@ class ChallengeEditor extends Component {
     super(props)
     this.state = {
       isLaunch: false,
+      isDeleteLaunch: false,
       isConfirm: false,
       isClose: false,
-      challenge: null,
+      hasForum: false,
       isOpenAdvanceSettings: false,
       isLoading: false,
       isSaving: false,
-      hasValidationErrors: false
+      showDesignChallengeWarningModel: false,
+      hasValidationErrors: false,
+      challenge: {
+        ...dropdowns['newChallenge']
+      },
+      draftChallenge: { data: { id: null } },
+      currentTemplate: null,
+      // set `assignedMemberDetails` immediately, in case it's already loaded
+      // NOTE that we have to keep `assignedMemberDetails` in the local state, rather than just get it from the props
+      // because we can update it locally when we choose another assigned user, so we don't have to wait for user details
+      // to be loaded from Member Service as we already know it in such case
+      assignedMemberDetails: this.props.assignedMemberDetails,
+      isPhaseChange: false
     }
     this.onUpdateInput = this.onUpdateInput.bind(this)
     this.onUpdateSelect = this.onUpdateSelect.bind(this)
     this.onUpdateOthers = this.onUpdateOthers.bind(this)
     this.onUpdateCheckbox = this.onUpdateCheckbox.bind(this)
+    this.onUpdateAssignedMember = this.onUpdateAssignedMember.bind(this)
+    this.onAssignSelf = this.onAssignSelf.bind(this)
+    this.addFileType = this.addFileType.bind(this)
+    this.removeFileType = this.removeFileType.bind(this)
+    this.updateFileTypesMetadata = this.updateFileTypesMetadata.bind(this)
     this.toggleAdvanceSettings = this.toggleAdvanceSettings.bind(this)
-    this.removeAttachment = this.removeAttachment.bind(this)
+    this.toggleNdaRequire = this.toggleNdaRequire.bind(this)
+    this.toggleUseSchedulingAPI = this.toggleUseSchedulingAPI.bind(this)
     this.removePhase = this.removePhase.bind(this)
     this.resetPhase = this.resetPhase.bind(this)
+    this.savePhases = this.savePhases.bind(this)
     this.toggleLaunch = this.toggleLaunch.bind(this)
     this.onUpdateMultiSelect = this.onUpdateMultiSelect.bind(this)
     this.onUpdatePhase = this.onUpdatePhase.bind(this)
     this.resetChallengeData = this.resetChallengeData.bind(this)
     this.onUpdateDescription = this.onUpdateDescription.bind(this)
-    this.onSubmitChallenge = this.onSubmitChallenge.bind(this)
-    this.saveDraft = this.saveDraft.bind(this)
+    this.onUpdateSkills = this.onUpdateSkills.bind(this)
+    this.onActiveChallenge = this.onActiveChallenge.bind(this)
     this.resetModal = this.resetModal.bind(this)
+    this.resetDesignChallengeWarningModal = this.resetDesignChallengeWarningModal.bind(this)
+    this.openCloseTaskConfirmation = this.openCloseTaskConfirmation.bind(this)
+    this.onCloseTask = this.onCloseTask.bind(this)
+    this.createNewChallenge = this.createNewChallenge.bind(this)
+    this.createNewDesignChallenge = this.createNewDesignChallenge.bind(this)
+    this.getCurrentChallengeId = this.getCurrentChallengeId.bind(this)
+    this.isValidChallengePrizes = this.isValidChallengePrizes.bind(this)
+    this.isValidChallenge = this.isValidChallenge.bind(this)
+    this.createChallengeHandler = this.createChallengeHandler.bind(this)
+    this.createDraftHandler = this.createDraftHandler.bind(this)
+    this.onSaveChallenge = this.onSaveChallenge.bind(this)
+    this.getCurrentTemplate = this.getCurrentTemplate.bind(this)
+    this.onUpdateMetadata = this.onUpdateMetadata.bind(this)
+    this.shouldShowDashboardSetting = this.shouldShowDashboardSetting.bind(this)
+    this.getTemplatePhases = this.getTemplatePhases.bind(this)
+    this.getAvailableTimelineTemplates = this.getAvailableTimelineTemplates.bind(this)
+    this.autoUpdateChallengeThrottled = _.throttle(this.validateAndAutoUpdateChallenge.bind(this), 3000) // 3s
+    this.updateResource = this.updateResource.bind(this)
+    this.updateSkills = this.updateSkills.bind(this)
+    this.onDeleteChallenge = this.onDeleteChallenge.bind(this)
+    this.deleteModalLaunch = this.deleteModalLaunch.bind(this)
+    this.toggleForumOnCreate = this.toggleForumOnCreate.bind(this)
+    this.intervalId = null
   }
 
   componentDidMount () {
-    this.resetChallengeData(this.props.isNew, this.props.challengeId, this.props.challengeDetails, this.props.metadata, this.props.attachments)
+    this.resetChallengeData(this.setState.bind(this))
+    setTimeout(() => {
+      this.onTick()
+    }, 500)
+    this.intervalId = setInterval(() => {
+      this.onTick()
+    }, 60000)
   }
 
-  componentWillReceiveProps (nextProps) {
-    const { isNew: newValue, challengeId, challengeDetails, metadata, attachments } = nextProps
-    this.resetChallengeData(newValue, challengeId, challengeDetails, metadata, attachments)
+  componentDidUnMount () {
+    clearInterval(this.intervalId)
   }
 
-  async resetChallengeData (isNew, challengeId, challengeDetails, metadata, attachments) {
-    if (isNew) {
-      this.setState({
-        challenge: {
-          ...dropdowns['newChallenge'],
-          startDate: moment().add(1, 'hour').format(),
-          phases: []
-        }
-      })
-    } else {
+  componentDidUpdate () {
+    this.resetChallengeData(this.setState.bind(this))
+  }
+
+  deleteModalLaunch () {
+    if (!this.state.isDeleteLaunch) {
+      this.setState({ isDeleteLaunch: true })
+    }
+  }
+
+  async onDeleteChallenge () {
+    const { deleteChallenge, challengeDetails, history, projectDetail } = this.props
+    try {
+      this.setState({ isSaving: true })
+      // Call action to delete the challenge
+      await deleteChallenge(challengeDetails.id, projectDetail.id)
+      this.setState({ isSaving: false })
+      this.resetModal()
+      history.push(`/projects/${challengeDetails.projectId}/challenges`)
+    } catch (e) {
+      const error = _.get(e, 'response.data.message', 'Unable to Delete the challenge')
+      this.setState({ isSaving: false, error })
+    }
+  }
+
+  /**
+   * Validates challenge and if its valid calling an autosave method
+   *
+   * @param {string} changedField changed field
+   * @param {any} prevValue previous value
+   */
+  async validateAndAutoUpdateChallenge (changedField, prevValue) {
+    if (this.validateChallenge()) {
+      this.autoUpdateChallenge(changedField, prevValue)
+    }
+  }
+
+  async resetChallengeData (setState = () => { }) {
+    const { isNew, challengeDetails, metadata, attachments, challengeId, assignedMemberDetails } = this.props
+    if (
+      challengeDetails &&
+      challengeDetails.id &&
+      challengeId === challengeDetails.id &&
+      (!this.state.challenge || this.state.challenge.id !== challengeDetails.id) &&
+      !isNew
+    ) {
       try {
         const copilotResource = this.getResourceFromProps('Copilot')
         const copilotFromResources = copilotResource ? copilotResource.memberHandle : ''
-        const reviewerResource = this.getResourceFromProps('Reviewer')
+        const reviewerResource =
+          (challengeDetails.type === 'First2Finish' || challengeDetails.type === 'Task')
+            ? this.getResourceFromProps('Iterative Reviewer') : this.getResourceFromProps('Reviewer')
         const reviewerFromResources = reviewerResource ? reviewerResource.memberHandle : ''
-        this.setState({ isConfirm: false, isLaunch: false })
+        setState({ isConfirm: false, isLaunch: false })
         const challengeData = this.updateAttachmentlist(challengeDetails, attachments)
+        const currentTemplate = _.find(metadata.timelineTemplates, { id: challengeData.timelineTemplateId })
         let copilot, reviewer
         const challenge = this.state.challenge
         if (challenge) {
@@ -104,21 +243,116 @@ class ChallengeEditor extends Component {
         }
         challengeData.copilot = copilot || copilotFromResources
         challengeData.reviewer = reviewer || reviewerFromResources
-        this.setState({ challenge: { ...dropdowns['newChallenge'], ...challengeData }, isLoading: false })
+        const challengeDetail = { ...challengeData }
+        const isRequiredNda = challengeDetail.terms && _.some(challengeDetail.terms, { id: DEFAULT_NDA_UUID })
+        const isOpenAdvanceSettings = challengeDetail.groups.length > 0 || isRequiredNda
+        if (!challengeDetail.reviewers) {
+          challengeDetail.reviewers = []
+        } else if (challengeDetail.trackId === DES_TRACK_ID) {
+          // Design challenges do not expose public review opportunities in UI.
+          // Normalize member reviewers so assignment controls remain available.
+          challengeDetail.reviewers = challengeDetail.reviewers.map(reviewer => (
+            reviewer && reviewer.isMemberReview !== false
+              ? { ...reviewer, shouldOpenOpportunity: false }
+              : reviewer
+          ))
+        }
+        setState({
+          challenge: challengeDetail,
+          assignedMemberDetails,
+          draftChallenge: {
+            data: {
+              ..._.cloneDeep(challengeDetails),
+              copilot: challengeData.copilot,
+              reviewer: challengeData.reviewer
+            }
+          },
+          isLoading: false,
+          isOpenAdvanceSettings,
+          currentTemplate
+        }, () => {
+          // set default phases
+          if (!challengeDetail.phases || !challengeDetail.phases.length) {
+            let defaultTemplate = currentTemplate
+            if (!defaultTemplate) {
+              defaultTemplate = _.find(metadata.timelineTemplates, { name: 'Standard Code' })
+            }
+            this.resetPhase(defaultTemplate)
+          }
+
+          // set default prize sets
+          // if (!challengeDetail.prizeSets || !challengeDetail.prizeSets.length) {
+          //   this.onUpdateOthers({
+          //     field: 'prizeSets',
+          //     value: this.getDefaultPrizeSets()
+          //   })
+          // }
+        })
       } catch (e) {
-        this.setState({ isLoading: true })
+        setState({ isLoading: true })
       }
     }
   }
 
-  resetModal () {
-    this.setState({ isLoading: true, isConfirm: false, isLaunch: false })
+  resetDesignChallengeWarningModal () {
+    this.setState({ showDesignChallengeWarningModel: false })
   }
 
-  onUpdateDescription (description) {
+  resetModal () {
+    this.setState({ isLoading: false, isConfirm: false, isLaunch: false, error: null, isCloseTask: false, isDeleteLaunch: false })
+  }
+
+  /**
+   * Close task when user confirm it
+   */
+  onCloseTask () {
+    // before marking challenge as complete, save all the changes user might have made
+    this.updateAllChallengeInfo(this.state.challenge.status, () => {
+      const { challenge: oldChallenge, assignedMemberDetails } = this.state
+
+      // set assigned user as the only one winner
+      const newChallenge = {
+        ...oldChallenge,
+        winners: [{
+          userId: assignedMemberDetails.userId,
+          handle: assignedMemberDetails.handle,
+          placement: 1
+        }]
+      }
+
+      this.setState({
+        challenge: newChallenge
+      }, () => {
+        this.updateAllChallengeInfo(CHALLENGE_STATUS.COMPLETED)
+      })
+    })
+  }
+
+  /**
+   * Open Close Task Confirmation
+   * @param {Event} e event
+   */
+  openCloseTaskConfirmation (e) {
+    e.preventDefault()
+    if (this.validateChallenge()) {
+      this.setState({ isCloseTask: true })
+    }
+  }
+
+  onUpdateDescription (description, fieldName) {
     const { challenge: oldChallenge } = this.state
-    const newChallenge = { ...oldChallenge, description }
-    this.setState({ challenge: newChallenge })
+    const newChallenge = { ...oldChallenge, [fieldName]: description }
+    this.setState({ challenge: newChallenge }, () => {
+      this.autoUpdateChallengeThrottled(fieldName)
+    })
+  }
+
+  onUpdateSkills (skills) {
+    const { challenge: oldChallenge } = this.state
+    const newChallenge = { ...oldChallenge, skills }
+    this.setState({ challenge: newChallenge }, () => {
+      this.autoUpdateChallengeThrottled('skills')
+    })
   }
 
   /**
@@ -139,7 +373,7 @@ class ChallengeEditor extends Component {
           newChallenge[e.target.name] = validateValue(e.target.value, VALIDATION_VALUE_TYPE.INTEGER, '$')
           break
         default:
-          newChallenge[e.target.name] = e.target.value
+          newChallenge[e.target.name] = validateValue(e.target.value, VALIDATION_VALUE_TYPE.STRING)
           break
       }
     } else {
@@ -171,7 +405,51 @@ class ChallengeEditor extends Component {
     }
 
     // calculate total cost of challenge
-    this.setState({ challenge: newChallenge })
+    this.setState({ challenge: newChallenge }, () => {
+      this.validateChallenge()
+    })
+  }
+
+  /**
+   * Update assigned member
+   * (only applied for the `Task` type challenge)
+   *
+   * @param {{label: string, value: string }} option option with user
+   */
+  onUpdateAssignedMember (option) {
+    const { challenge: oldChallenge } = this.state
+    const newChallenge = { ...oldChallenge }
+    let assignedMemberDetails
+
+    if (option && option.value) {
+      assignedMemberDetails = {
+        handle: option.label,
+        userId: parseInt(option.value, 10)
+      }
+    } else {
+      assignedMemberDetails = null
+    }
+
+    this.setState({
+      challenge: newChallenge,
+      assignedMemberDetails
+    })
+  }
+
+  /**
+   * Update Assigned Member to Current User
+   */
+  onAssignSelf () {
+    const { loggedInUser } = this.props
+
+    const assignedMemberDetails = {
+      handle: loggedInUser.handle,
+      userId: loggedInUser.userId
+    }
+
+    this.setState({
+      assignedMemberDetails
+    })
   }
 
   /**
@@ -180,6 +458,9 @@ class ChallengeEditor extends Component {
    * @param isSub The option from sub field
    * @param field The challenge field
    * @param index The index of array
+   *
+   * Side effect: when `field` is `typeId` and the selected type is not Marathon Match,
+   * resets `funChallenge` to `false`.
    */
   onUpdateSelect (option, isSub = false, field = '', index = -1) {
     if (option) {
@@ -187,6 +468,9 @@ class ChallengeEditor extends Component {
       const newChallenge = { ...oldChallenge }
       if (!isSub) {
         newChallenge[field] = option
+        if (field === 'typeId' && option !== MARATHON_TYPE_ID) {
+          newChallenge.funChallenge = false
+        }
       } else {
         if (index < 0) {
           newChallenge[field][option.key] = option.name
@@ -194,8 +478,9 @@ class ChallengeEditor extends Component {
           newChallenge[field][index][option.key] = option.name
         }
       }
-
-      this.setState({ challenge: newChallenge })
+      this.setState({ challenge: newChallenge }, () => {
+        this.validateChallenge()
+      })
     }
   }
 
@@ -210,11 +495,13 @@ class ChallengeEditor extends Component {
     if (field === 'copilot' && value === newChallenge[field]) {
       value = null
     }
-    if (field === 'phases') {
-      value = value && value.map(element => _.set(_.set({}, 'duration', element.duration), 'phaseId', element.id))
+    if (field === 'prizeSets') {
+      value = value.filter(val => _.values(PRIZE_SETS_TYPE).includes(val.type))
     }
     newChallenge[field] = value
-    this.setState({ challenge: newChallenge })
+    this.setState({ challenge: newChallenge }, () => {
+      this.validateChallenge()
+    })
   }
 
   /**
@@ -252,7 +539,120 @@ class ChallengeEditor extends Component {
     } else {
       _.set(newChallenge, `${field}.${index}.check`, checked)
     }
+    this.setState({ challenge: newChallenge }, () => {
+      this.validateChallenge()
+    })
+  }
+
+  /**
+   * Helper method which updates the value of `fileTypes` metadata without mutation of the challenge object.
+   *
+   * @param {Function} processValue callback function to update the value
+   */
+  updateFileTypesMetadata (processValue) {
+    const { challenge: oldChallenge } = this.state
+    // avoid mutation of `challenge` object
+    const newChallenge = {
+      ...oldChallenge,
+      // avoid mutation of `metadata` array
+      metadata: [
+        ...(oldChallenge.metadata || [])
+      ]
+    }
+
+    // find existent fileType metadata
+    let fileTypesMetadataIndex = _.findIndex(newChallenge.metadata, { name: 'fileTypes' })
+    let fileTypesMetadata
+
+    // if found existent fileType metadata we have to recreate the record to avoid mutation
+    if (fileTypesMetadataIndex > -1) {
+      fileTypesMetadata = { ...newChallenge.metadata[fileTypesMetadataIndex] }
+      newChallenge.metadata[fileTypesMetadataIndex] = fileTypesMetadata
+      // if not yet, create an empty record in metadata
+    } else {
+      fileTypesMetadata = { name: 'fileTypes', value: '[]' }
+      newChallenge.metadata.push(fileTypesMetadata)
+    }
+
+    // as values in metadata are always stored as string, we have to parse it, update and stringify again
+    const oldFileTypes = JSON.parse(fileTypesMetadata.value)
+    const newFileTypes = processValue(oldFileTypes)
+    fileTypesMetadata.value = JSON.stringify(newFileTypes)
+
     this.setState({ challenge: newChallenge })
+  }
+
+  /**
+   * Add new file type
+   * @param {String} newFileType The new file type
+   */
+  addFileType (newFileType) {
+    this.updateFileTypesMetadata((oldFileTypes) => {
+      const newFileTypes = [...oldFileTypes, newFileType]
+
+      return newFileTypes
+    })
+  }
+
+  /**
+   * Remove file type
+   * @param {String} fileType file type
+   */
+  removeFileType (fileType) {
+    this.updateFileTypesMetadata((oldFileTypes) => {
+      const newFileTypes = _.reject(oldFileTypes, (type) => type === fileType)
+
+      return newFileTypes
+    })
+  }
+
+  /**
+   * Update Metadata
+   * @param name Name of data
+   * @param value The value
+   * @param path Path of value
+   */
+  onUpdateMetadata (name, value, path) {
+    const { challenge: oldChallenge } = this.state
+    const newChallenge = { ...oldChallenge }
+    if (!newChallenge.metadata) {
+      newChallenge.metadata = []
+    }
+    let existingMetadata = _.find(newChallenge.metadata, { name })
+    if (!existingMetadata) {
+      existingMetadata = { name }
+      newChallenge.metadata.push(existingMetadata)
+      if (name === 'submissionLimit') {
+        existingMetadata.value = '{}'
+      }
+    }
+    if (existingMetadata.name === 'submissionLimit') {
+      const submissionLimit = JSON.parse(existingMetadata.value)
+      _.forOwn(submissionLimit, (value, key) => {
+        if (value === 'true') {
+          submissionLimit[key] = 'false'
+        }
+      })
+      submissionLimit[path] = `${value}`
+      if (path === 'count') {
+        submissionLimit.limit = 'true'
+        submissionLimit.unlimited = 'false'
+      } else if (path === 'unlimited' && value) {
+        submissionLimit.limit = 'false'
+        submissionLimit.count = ''
+      }
+      existingMetadata.value = JSON.stringify(submissionLimit)
+    } else if (existingMetadata.name === 'show_data_dashboard') {
+      existingMetadata.value = Boolean(value)
+    } else {
+      existingMetadata.value = `${value}`
+    }
+    this.setState({ challenge: newChallenge })
+  }
+
+  toggleForumOnCreate () {
+    const { hasForum } = this.state
+    this.setState({ hasForum: !hasForum })
   }
 
   toggleAdvanceSettings () {
@@ -260,13 +660,47 @@ class ChallengeEditor extends Component {
     this.setState({ isOpenAdvanceSettings: !isOpenAdvanceSettings })
   }
 
-  removeAttachment (file) {
+  toggleNdaRequire () {
     const { challenge } = this.state
     const newChallenge = { ...challenge }
-    const { attachments: oldAttachments } = challenge
-    const newAttachments = _.remove(oldAttachments, att => att.fileName !== file)
-    newChallenge.attachments = _.clone(newAttachments)
+    let { terms: oldTerms } = challenge
+    if (!oldTerms) {
+      oldTerms = []
+    }
+    let newTerms = []
+    if (_.some(oldTerms, { id: DEFAULT_NDA_UUID })) {
+      newTerms = _.remove(oldTerms, t => t.id !== DEFAULT_NDA_UUID)
+    } else {
+      oldTerms.push({ id: DEFAULT_NDA_UUID, roleId: SUBMITTER_ROLE_UUID })
+      newTerms = oldTerms
+    }
+    if (!_.some(newTerms, { id: DEFAULT_TERM_UUID })) {
+      newTerms.push({ id: DEFAULT_TERM_UUID, roleId: SUBMITTER_ROLE_UUID })
+    }
+    newChallenge.terms = newTerms
     this.setState({ challenge: newChallenge })
+  }
+
+  toggleUseSchedulingAPI () {
+    const { challenge } = this.state
+    const newChallenge = { ...challenge }
+    const useSchedulingApi = !_.get(newChallenge, 'legacy.useSchedulingAPI', false)
+    _.set(newChallenge, 'legacy.useSchedulingAPI', useSchedulingApi)
+    this.setState({ challenge: newChallenge })
+  }
+
+  /**
+   * Determines when the data dashboard toggle should be shown.
+   *
+   * @param {Object} challenge the challenge data to evaluate
+   */
+  shouldShowDashboardSetting (challenge = {}) {
+    const typeId = _.get(challenge, 'typeId')
+    const metadata = _.get(challenge, 'metadata', [])
+    const hasDashboardMetadata = _.some(metadata, { name: 'show_data_dashboard' })
+    const isMarathonMatch = typeId === MARATHON_TYPE_ID
+
+    return isMarathonMatch || hasDashboardMetadata
   }
 
   /**
@@ -281,40 +715,280 @@ class ChallengeEditor extends Component {
     newChallenge.phases = _.clone(newPhaseList)
     this.setState({ challenge: newChallenge })
   }
+
+  /**
+   * Save updated  challenge Phases
+   */
+  async savePhases () {
+    await this.autoUpdateChallengeThrottled('phases')
+    this.setState({
+      isConfirm: true,
+      isLaunch: true
+    })
+  }
+
   /**
    * Reset  challenge Phases
    */
-  resetPhase (timeline) {
-    const timelinePhaseIds = timeline.phases.map(timelinePhase => timelinePhase.phaseId || timelinePhase)
-    const validPhases = this.props.metadata.challengePhases.filter(challengePhase => {
-      return timelinePhaseIds.includes(challengePhase.id)
-    })
-    this.onUpdateOthers({
-      field: 'phases',
-      value: validPhases
+  async resetPhase (timeline) {
+    const { challenge: oldChallenge } = this.state
+    const newChallenge = { ...oldChallenge }
+    newChallenge.phases = []
+    this.setState({
+      currentTemplate: timeline,
+      challenge: newChallenge
+    }, () => {
+      this.autoUpdateChallengeThrottled('reset-phases')
     })
   }
 
-  toggleLaunch () {
+  toggleLaunch (e) {
+    e.preventDefault()
     if (this.validateChallenge()) {
-      this.setState({ isLaunch: true })
+      if (!this.props.isBillingAccountExpired) {
+        this.setState({ isLaunch: true })
+      } else {
+        this.setState({ isLaunch: true, error: 'Unable to activate challenge as Billing Account is not active.' })
+      }
     }
+  }
+
+  createDraftHandler () {
+    if (this.validateChallenge()) {
+      this.saveDraft()
+    }
+  }
+
+  createChallengeHandler (e) {
+    e.preventDefault()
+    if (this.validateChallenge()) {
+      this.createNewChallenge()
+    }
+  }
+
+  onSaveChallenge (e) {
+    e.preventDefault()
+    if (this.validateChallenge()) {
+      this.onlySave()
+    }
+  }
+
+  isValidChallengePrizes () {
+    const challengePrizes = _.find(this.state.challenge.prizeSets, p => p.type === PRIZE_SETS_TYPE.CHALLENGE_PRIZES, [])
+    if (!challengePrizes || !challengePrizes.prizes || challengePrizes.prizes.length === 0) {
+      return false
+    }
+
+    return _.every(challengePrizes.prizes, (prize, index) => {
+      if (prize.value === '') {
+        return false
+      }
+      const prizeNumber = parseInt(prize.value)
+      if (prizeNumber <= 0 || prizeNumber > 1000000) {
+        return false
+      }
+      if (index > 0) {
+        if (+prize.value > +challengePrizes.prizes[index - 1].value) {
+          return false
+        }
+      }
+      return true
+    })
+  }
+
+  checkValidCopilot () {
+    const { challenge } = this.state
+    if (challenge.funChallenge === true) {
+      return true
+    }
+
+    const copilotFee = _.find(challenge.prizeSets, p => p.type === PRIZE_SETS_TYPE.COPILOT_PAYMENT, [])
+    if (copilotFee && parseInt(copilotFee.prizes[0].value) > 0 && !challenge.copilot) {
+      return false
+    }
+    return true
+  }
+
+  isValidReviewers () {
+    const { challenge } = this.state
+    const isTask = _.get(challenge, 'task.isTask', false)
+    if (isTask) {
+      return true
+    }
+    const reviewers = challenge.reviewers || []
+    const isMM = challenge.typeId === MARATHON_TYPE_ID
+    const requiredPhaseNames = [
+      'Screening',
+      'Review',
+      'Post-mortem',
+      'Approval',
+      'Checkpoint Screening',
+      'Iterative Review'
+    ]
+    const normalize = (name) => (name || '')
+      .toString()
+      .toLowerCase()
+      .replace(/[-\s]/g, '')
+    const requiredNormalized = new Set(requiredPhaseNames.map(normalize))
+    const challengePhases = Array.isArray(challenge.phases) ? challenge.phases : []
+    const requiredPhaseIds = []
+    for (const phase of challengePhases) {
+      const phaseNameNorm = normalize(phase.name)
+      if (requiredNormalized.has(phaseNameNorm)) {
+        requiredPhaseIds.push(phase.phaseId || phase.id)
+      }
+    }
+
+    // If any required phase exists and no reviewers configured, it's invalid
+    // Exception: Marathon Match does not require review configuration
+    if (!isMM && reviewers.length === 0 && requiredPhaseIds.length > 0) {
+      return false
+    }
+
+    // Validate each reviewer
+    for (const reviewer of reviewers) {
+      const isAI = (reviewer.aiWorkflowId && reviewer.aiWorkflowId.trim() !== '') || !reviewer.isMemberReview
+
+      if (isAI) {
+        if (!reviewer.aiWorkflowId || reviewer.aiWorkflowId.trim() === '') {
+          return false
+        }
+      } else {
+        if (!reviewer.scorecardId) {
+          return false
+        }
+
+        const memberCount = parseInt(reviewer.memberReviewerCount) || 1
+        if (memberCount < 1 || !Number.isInteger(memberCount)) {
+          return false
+        }
+      }
+
+      if (!reviewer.phaseId) {
+        return false
+      }
+    }
+
+    // Enforce coverage: if the challenge has any of the required phases,
+    // then there must be at least one reviewer with a scorecard for that phase.
+    // If any required phase exists, ensure at least one reviewer with scorecard configured for it
+    if (!isMM) {
+      for (const phaseId of requiredPhaseIds) {
+        const hasReviewerForPhase = reviewers.some(r => {
+          const rPhaseId = r.phaseId
+          const hasScorecard = !!r.scorecardId
+          return rPhaseId === phaseId && hasScorecard
+        })
+        if (!hasReviewerForPhase) {
+          return false
+        }
+      }
+    }
+
+    return true
+  }
+
+  isValidChallenge () {
+    const { challenge } = this.state
+    const isFunChallenge = challenge.funChallenge === true
+    if (this.props.isNew) {
+      const { name, trackId, typeId } = challenge
+      return !!name && !!trackId && !!typeId
+    }
+
+    if (!isFunChallenge && !this.isValidChallengePrizes()) {
+      return false
+    }
+
+    if (!isFunChallenge && !this.checkValidCopilot()) {
+      return false
+    }
+
+    if (!this.isValidReviewers()) {
+      return false
+    }
+
+    const billingAccountId = _.get(challenge, 'billing.billingAccountId')
+    const normalizedBillingAccountId = _.isNil(billingAccountId) ? null : String(billingAccountId)
+    const isSkillsRequired = normalizedBillingAccountId ? !SKILLS_OPTIONAL_BILLING_ACCOUNT_IDS.includes(normalizedBillingAccountId) : true
+
+    const requiredFields = [
+      'trackId',
+      'typeId',
+      'name',
+      'description'
+    ]
+    if (!isFunChallenge) {
+      requiredFields.push('prizeSets')
+    }
+    if (isSkillsRequired) {
+      requiredFields.push('skills')
+    }
+    let isRequiredMissing = false
+
+    requiredFields.forEach((key) => {
+      const value = challenge[key]
+
+      // this check works for string and array values
+      isRequiredMissing = isRequiredMissing ||
+        !value ||
+        (_.isString(value) && value.trim().length === 0) ||
+        (_.isArray(value) && value.length === 0)
+    })
+
+    return !(isRequiredMissing || _.isEmpty(this.state.currentTemplate))
+  }
+
+  // Return array of phase names that have more than one manual (member) reviewer configured.
+  // If none, returns empty array.
+  getDuplicateManualReviewerPhases () {
+    const { challenge } = this.state
+    const reviewers = (challenge && challenge.reviewers) || []
+    const phases = (challenge && challenge.phases) || []
+
+    const counts = {}
+    reviewers.forEach(r => {
+      if (r && (r.isMemberReview !== false) && r.phaseId) {
+        const pid = String(r.phaseId)
+        counts[pid] = (counts[pid] || 0) + 1
+      }
+    })
+
+    const duplicatedPhaseIds = Object.keys(counts).filter(pid => counts[pid] > 1)
+    if (duplicatedPhaseIds.length === 0) return []
+
+    return duplicatedPhaseIds.map(pid => {
+      const p = phases.find(ph => String(ph.phaseId || ph.id) === pid)
+      return p ? (p.name || pid) : pid
+    })
   }
 
   validateChallenge () {
-    if (Object.values(pick(['track', 'typeId', 'name', 'description', 'tags', 'prizeSets'], this.state.challenge)).filter(v => !v.length).length) {
-      this.setState(prevState => ({
-        ...prevState,
-        challenge: {
-          ...prevState.challenge,
-          submitTriggered: true
-        }
-      }))
-      this.setState({ hasValidationErrors: true })
-      return false
+    if (this.isValidChallenge()) {
+      // Additional validation: block saving draft if there are duplicate manual reviewer configs per phase
+      const duplicates = this.getDuplicateManualReviewerPhases()
+      if (duplicates && duplicates.length > 0) {
+        const message = `Duplicate manual reviewer configuration found for phase(s): ${duplicates.join(', ')}. Only one manual reviewer configuration is allowed per phase.`
+        this.setState({ hasValidationErrors: true, error: message })
+        return false
+      }
+
+      if (this.state.error) {
+        this.setState({ error: null })
+      }
+      this.setState({ hasValidationErrors: false })
+      return true
     }
-    this.setState({ hasValidationErrors: false })
-    return true
+
+    this.setState(prevState => ({
+      ...prevState,
+      challenge: {
+        ...prevState.challenge,
+        submitTriggered: true
+      }
+    }))
+    this.setState({ hasValidationErrors: true })
+    return false
   }
 
   /**
@@ -325,103 +999,570 @@ class ChallengeEditor extends Component {
   onUpdateMultiSelect (options, field) {
     const { challenge } = this.state
     let newChallenge = { ...challenge }
-    newChallenge[field] = options ? options.split(',') : []
-    if (field === 'termsIds') {
-      // backwards compatibily with v4 requires converting 'terms' field to 'termsIds'
-      delete newChallenge.terms
-    }
-    this.setState({ challenge: newChallenge })
+    newChallenge[field] = options ? options.map(option => option.value) : []
+
+    this.setState({ challenge: newChallenge }, () => {
+      this.validateChallenge()
+    })
   }
 
   onUpdatePhase (newValue, property, index) {
-    if (property === 'duration' && newValue < 0) newValue = 0
+    if (property === 'duration' && (newValue | 0) <= 0) return
     let newChallenge = _.cloneDeep(this.state.challenge)
     newChallenge.phases[index][property] = newValue
     this.setState({ challenge: newChallenge })
   }
 
-  onUploadFile (files) {
-    const { challenge: oldChallenge } = this.state
-    const newChallenge = { ...oldChallenge }
-    _.forEach(files, (file) => {
-      newChallenge.attachments.push({
-        fileName: file.name,
-        size: file.size
-      })
-    })
-    this.setState({ challenge: newChallenge })
-  }
+  onTick () {
+    if (this.state && this.state) {
+      const { phases } = this.state.challenge
+      let newChallenge = _.cloneDeep(this.state.challenge)
+      const isDesignChallenge = newChallenge.trackId === DES_TRACK_ID
+      const is2RoundChallenge = is2RoundsChallenge(newChallenge)
+      const is2RoundDesignChallenge = isDesignChallenge && is2RoundChallenge
 
-  saveDraft () {
-    if (this.validateChallenge()) {
-      this.onSubmitChallenge('Draft')
+      for (let index = 0; index < phases.length; ++index) {
+        const currentPhase = newChallenge.phases[index]
+        const phaseName = _.get(currentPhase, 'name', '')
+        const normalizedPhaseName = _.toLower(phaseName)
+        const isRegistrationPhase = normalizedPhaseName === 'registration'
+        const isSubmissionPhase = normalizedPhaseName === 'submission'
+        const isCheckpointSubmissionPhase = normalizedPhaseName === 'checkpoint submission'
+
+        currentPhase.isDurationActive = canChangeDuration(currentPhase)
+        // Allow editing registration start time even when it aligns with submission so dates can be staggered later.
+        currentPhase.isStartTimeActive = (
+          (isSubmissionPhase && !is2RoundDesignChallenge) ||
+          isCheckpointSubmissionPhase ||
+          isRegistrationPhase ||
+          index <= 0
+        )
+        currentPhase.isOpen = currentPhase.isDurationActive
+      }
+      this.setState({ challenge: newChallenge })
     }
   }
 
+  onUpdatePhaseDate (phase, index) {
+    console.log('onUpdatePhase', phase, index)
+    const { phases } = this.state.challenge
+    let newChallenge = _.cloneDeep(this.state.challenge)
+
+    if (phase.isBlur && newChallenge.phases[index]['name'] === 'Submission') {
+      newChallenge.phases[index]['duration'] = _.max([
+        newChallenge.phases[index - 1]['duration'],
+        phase.duration
+      ])
+      newChallenge.phases[index]['scheduledStartDate'] = moment(phase.startDate).toISOString()
+
+      newChallenge.phases[index]['scheduledEndDate'] = getPhaseEndDate(
+        newChallenge.phases[index]['scheduledStartDate'],
+        newChallenge.phases[index]['duration']
+      )
+    } else {
+      newChallenge.phases[index]['duration'] = phase.duration
+      newChallenge.phases[index]['scheduledStartDate'] = moment(phase.startDate).toISOString()
+      newChallenge.phases[index]['scheduledEndDate'] = moment(phase.endDate).toISOString()
+    }
+
+    for (let phaseIndex = index + 1; phaseIndex < phases.length; ++phaseIndex) {
+      if (newChallenge.phases[phaseIndex]['name'] === 'Submission' || newChallenge.phases[index].name === 'Checkpoint Submission') {
+        console.log('Setting submission phase scheduled start date', moment(phase.startDate).toISOString())
+        newChallenge.phases[index]['scheduledStartDate'] = moment(phase.startDate).toISOString()
+
+        newChallenge.phases[phaseIndex]['duration'] = _.max([
+          newChallenge.phases[phaseIndex - 1]['duration'],
+          newChallenge.phases[phaseIndex]['duration']
+        ])
+      } else {
+        newChallenge.phases[phaseIndex]['scheduledStartDate'] =
+          newChallenge.phases[phaseIndex - 1]['scheduledEndDate']
+      }
+      newChallenge.phases[phaseIndex]['scheduledEndDate'] = getPhaseEndDate(
+        newChallenge.phases[phaseIndex]['scheduledStartDate'],
+        newChallenge.phases[phaseIndex]['duration']
+      )
+    }
+    if (!_.isEqual(newChallenge.phases[index], phases[index])) {
+      this.setState({ isPhaseChange: true })
+    }
+    console.log('Setting new state', newChallenge)
+    console.log('isPhaseChange', this.state.isPhaseChange)
+    this.setState({ challenge: newChallenge })
+
+    setTimeout(() => {
+      this.onTick()
+    }, 500)
+  }
+
+  /**
+   * Collects challenge payload for create/update API calls.
+   *
+   * Includes `funChallenge` in picked challenge fields and, when `funChallenge`
+   * is enabled, omits `prizeSets` from the payload.
+   *
+   * @param {string} status challenge status to set in payload
+   * @returns {Object} cloned challenge payload ready for API submission
+   */
   collectChallengeData (status) {
-    const { attachments } = this.props
+    const { isPhaseChange } = this.state
+    const { attachments, metadata } = this.props
     const challenge = pick([
       'phases',
       'typeId',
-      'track',
+      'trackId',
       'name',
       'description',
+      'privateDescription',
       'reviewType',
       'tags',
       'groups',
-      'prizeSets',
+      'metadata',
       'startDate',
-      'termsIds'], this.state.challenge)
-    challenge.timelineTemplateId = this.props.metadata.timelineTemplates[0].id
+      'terms',
+      'prizeSets',
+      'winners',
+      'milestoneId',
+      'discussions',
+      'task',
+      'skills',
+      'reviewers',
+      'funChallenge',
+      'wiproAllowed'
+    ], this.state.challenge)
+    const isTask = _.find(metadata.challengeTypes, { id: challenge.typeId, isTask: true })
+    challenge.legacy = _.assign(this.state.challenge.legacy, {
+      reviewType: challenge.reviewType
+    })
+    challenge.timelineTemplateId = _.get(this.getCurrentTemplate(), 'id')
     challenge.projectId = this.props.projectId
-    challenge.prizeSets = challenge.prizeSets.map(p => {
+    challenge.prizeSets = (challenge.prizeSets || []).map(p => {
       const prizes = p.prizes.map(s => ({ ...s, value: convertDollarToInteger(s.value, '$') }))
       return { ...p, prizes }
     })
+    if (challenge.funChallenge === true) {
+      delete challenge.prizeSets
+    }
     challenge.status = status
+    if (status === CHALLENGE_STATUS.ACTIVE && isTask) {
+      challenge.startDate = moment().format()
+    }
+
     if (this.state.challenge.id) {
       challenge.attachmentIds = _.map(attachments, item => item.id)
     }
-    if (challenge.termsIds && challenge.termsIds.length === 0) delete challenge.termsIds
+    console.log('Phase Data', challenge.phases)
+    challenge.phases = challenge.phases.map((p) => pick([
+      'duration',
+      'phaseId',
+      'scheduledStartDate',
+      'scheduledEndDate'
+    ], p))
+
+    if (challenge.terms && challenge.terms.length === 0) delete challenge.terms
     delete challenge.attachments
-    return challenge
+    delete challenge.reviewType
+    if (!isPhaseChange) delete challenge.phases
+
+    const cloned = _.cloneDeep(challenge)
+    console.log('CLONED', cloned)
+
+    return cloned
   }
 
-  async onSubmitChallenge (status = 'Active') {
-    if (this.state.isSaving) return
-    const { challengeId } = this.props
-    const { copilot, reviewer } = this.state.challenge
-    const challenge = this.collectChallengeData(status)
+  goToEdit (challengeID) {
+    const { history } = this.props
+    const newPath = history.location.pathname.replace('/new', `/${challengeID}`) + '/edit'
+    history.push(newPath)
+  };
+
+  createNewDesignChallenge () {
+    this.resetDesignChallengeWarningModal()
+    this.createNewChallenge()
+  }
+
+  async createNewChallenge () {
+    if (!this.props.isNew) return
+    const { metadata, createChallenge, projectDetail } = this.props
+    const { challenge: { name, trackId, typeId, milestoneId, roundType, challengeType, metadata: challengeMetadata } } = this.state
+    const { timelineTemplates } = metadata
+    const isDesignChallenge = trackId === DES_TRACK_ID
+    const showDashBoard = this.shouldShowDashboardSetting({ trackId, typeId, metadata: challengeMetadata })
+
+    // indicate that creating process has started
+    this.setState({ isSaving: true })
+
+    // fallback template
+    const STD_DEV_TIMELINE_TEMPLATE = _.find(timelineTemplates, { name: 'Standard Development' })
+    const avlTemplates = this.getAvailableTimelineTemplates()
+    // chooses first available timeline template or fallback template for the new challenge
+    const defaultTemplate = avlTemplates && avlTemplates.length > 0 ? avlTemplates[0] : STD_DEV_TIMELINE_TEMPLATE
+    const isTask = _.find(metadata.challengeTypes, { id: typeId, isTask: true })
+    const tags = trackId === QA_TRACK_ID ? ['QA'] : []
+    if (challengeType) {
+      tags.push(challengeType)
+    }
+    let timelineTemplateId = defaultTemplate.id
+    if (roundType === ROUND_TYPES.TWO_ROUNDS) {
+      timelineTemplateId = MULTI_ROUND_CHALLENGE_TEMPLATE_ID
+    }
+
+    const newChallenge = {
+      status: CHALLENGE_STATUS.NEW,
+      projectId: this.props.projectId,
+      name,
+      typeId,
+      trackId,
+      startDate: moment().add(1, 'days').format(),
+      legacy: {
+        reviewType: isTask || isDesignChallenge ? REVIEW_TYPES.INTERNAL : REVIEW_TYPES.COMMUNITY
+      },
+      descriptionFormat: 'markdown',
+      timelineTemplateId,
+      terms: [{ id: DEFAULT_TERM_UUID, roleId: SUBMITTER_ROLE_UUID }],
+      groups: [],
+      milestoneId,
+      tags,
+      reviewers: []
+      // prizeSets: this.getDefaultPrizeSets()
+    }
+    if (isTask) {
+      newChallenge.legacy.pureV5Task = true
+    }
+    if (projectDetail.terms) {
+      const currTerms = new Set(newChallenge.terms.map(term => term.id))
+      newChallenge.terms.push(
+        ...projectDetail.terms
+          .filter(term => !currTerms.has(term))
+          .map(term => ({ id: term, roleId: SUBMITTER_ROLE_UUID }))
+      )
+    }
+    if (projectDetail.groups) {
+      newChallenge.groups.push(...projectDetail.groups)
+    }
+    if (!isTask || this.state.hasForum) {
+      const discussions = this.getDiscussionsConfig(newChallenge)
+      if (discussions) {
+        newChallenge.discussions = discussions
+      }
+    }
+    if (showDashBoard) {
+      if (!newChallenge.metadata) {
+        newChallenge.metadata = []
+      }
+      let useDashboard = _.find(challengeMetadata, { name: 'show_data_dashboard' })
+      if (useDashboard === undefined) {
+        useDashboard = { name: 'show_data_dashboard', value: 'false' }
+      } else if (_.isBoolean(useDashboard.value)) {
+        useDashboard = { name: 'show_data_dashboard', value: _.toString(useDashboard.value) }
+      }
+
+      newChallenge.metadata.push(useDashboard)
+    }
     try {
-      this.setState({ isSaving: true })
-      const response = challengeId ? await updateChallenge(challenge, challengeId) : await createChallenge(challenge)
-      if (copilot) await this.updateResource(response.data.id, 'Copilot', copilot)
-      if (reviewer) await this.updateResource(response.data.id, 'Reviewer', reviewer)
-      this.setState({ isLaunch: true, isConfirm: response.data.id, challenge: { ...this.state.challenge, ...challenge }, isSaving: false })
+      const action = await createChallenge(newChallenge, projectDetail.id)
+      if (isTask) {
+        await this.updateResource(action.challengeDetails.id, 'Iterative Reviewer', action.challengeDetails.createdBy, action.challengeDetails.reviewer)
+        action.challengeDetails.reviewer = action.challengeDetails.createdBy
+      }
+      const draftChallenge = {
+        data: action.challengeDetails
+      }
+      this.goToEdit(draftChallenge.data.id)
+      this.setState({ isSaving: false, draftChallenge })
     } catch (e) {
       this.setState({ isSaving: false })
     }
   }
 
-  getResourceRoleByName (name) {
-    const { resourceRoles } = this.props.metadata
-    return resourceRoles ? resourceRoles.find(role => role.name === name) : null
+  getDiscussionsConfig (challenge) {
+    if (_.includes(CREATE_FORUM_TYPE_IDS, challenge.typeId)) {
+      return ([
+        {
+          name: `${challenge.name} Discussion`,
+          type: 'CHALLENGE',
+          provider: 'vanilla'
+        }
+      ])
+    }
   }
 
-  async updateResource (challengeId, name, value) {
-    let needToCreateResource = this.props.isNew
-    const newResource = {
-      challengeId,
-      memberHandle: value,
-      roleId: this.getResourceRoleByName(name).id
+  /*
+    TODO
+
+    IMPORTANT!!!
+
+    This method might be wrong. We might need to fix it when enabling editing phases UI.
+    See issue which caused by using of this method https://github.com/topcoder-platform/work-manager/issues/1012
+  */
+  getTemplatePhases (template) {
+    const timelinePhaseIds = template.phases.map(timelinePhase => timelinePhase.phaseId || timelinePhase)
+    const validPhases = _.cloneDeep(this.props.metadata.challengePhases).filter(challengePhase => {
+      return timelinePhaseIds.includes(challengePhase.id)
+    })
+    validPhases.forEach(phase => {
+      delete Object.assign(phase, { phaseId: phase.id }).id
+    })
+    return validPhases.map(p => ({
+      duration: p.duration,
+      phaseId: p.phaseId
+    }))
+  }
+
+  // getDefaultPrizeSets () {
+  //   return [
+  //     {
+  //       type: PRIZE_SETS_TYPE.CHALLENGE_PRIZES,
+  //       prizes: [{ type: 'money', value: '0' }]
+  //     }
+  //   ]
+  // }
+
+  async autoUpdateChallenge (changedField, prevValue) {
+    const { partiallyUpdateChallengeDetails, projectDetail } = this.props
+    if (this.state.isSaving || this.state.isLoading || !this.getCurrentChallengeId()) return
+    const challengeId = this.state.draftChallenge.data.id || this.props.challengeId
+    if (_.includes(['copilot', 'reviewer'], changedField)) {
+      switch (changedField) {
+        case 'copilot':
+          await this.updateResource(challengeId, 'Copilot', this.state.challenge.copilot, prevValue)
+          break
+        case 'reviewer': {
+          const { type } = this.state.challenge
+          const useIterativeReview = type === 'First2Finish' || type === 'Task'
+          await this.updateResource(challengeId, useIterativeReview ? 'Iterative Review' : 'Reviewer', this.state.challenge.reviewer, prevValue)
+          break
+        }
+      }
+    } else if (changedField === 'skills') {
+      await this.updateSkills(challengeId, this.state.challenge.skills)
+    } else {
+      let patchObject = (changedField === 'reviewType')
+        ? { legacy: { reviewType: this.state.challenge[changedField] } } // NOTE it assumes challenge API PATCH respects the changes in legacy JSON
+        : { [changedField]: this.state.challenge[changedField] }
+      if (changedField === 'phases' || changedField === 'reset-phases') {
+        const { currentTemplate } = this.state
+        // need timelineTemplateId for updating phase
+        patchObject.timelineTemplateId = currentTemplate ? currentTemplate.id : this.state.challenge.timelineTemplateId
+      }
+
+      if (changedField === 'reset-phases') {
+        delete patchObject['reset-phases']
+        const { currentTemplate } = this.state
+        patchObject.phases = this.getTemplatePhases(currentTemplate)
+      }
+      if (changedField === 'prizeSets' && !this.isValidChallengePrizes()) {
+        return
+      }
+      try {
+        const copilot = this.state.draftChallenge.data.copilot
+        const reviewer = this.state.draftChallenge.data.reviewer
+        const action = await partiallyUpdateChallengeDetails(challengeId, patchObject, projectDetail.id)
+        const draftChallenge = { data: action.challengeDetails }
+        draftChallenge.data.copilot = copilot
+        draftChallenge.data.reviewer = reviewer
+        const { challenge: oldChallenge } = this.state
+        const newChallenge = { ...oldChallenge }
+
+        if (changedField === 'reset-phases') {
+          const { currentTemplate } = this.state
+          newChallenge.timelineTemplateId = currentTemplate.id
+          newChallenge.phases = _.cloneDeep(draftChallenge.data.phases)
+          this.setState({
+            draftChallenge,
+            challenge: newChallenge
+          })
+        } else {
+          this.setState({ draftChallenge })
+        }
+      } catch (error) {
+        if (changedField === 'groups') {
+          toastr.error('Error', `You don't have access to the ${patchObject.groups[0]} group`)
+          const newGroups = this.state.challenge.groups.filter(group => group !== patchObject.groups[0])
+          this.setState({ challenge: { ...this.state.challenge, groups: newGroups } })
+        }
+      }
     }
-    const currentResource = this.getResourceFromProps(name)
-    if (currentResource && value !== currentResource.memberHandle) {
-      needToCreateResource = true
-      const resource = _.pick(currentResource, ['challengeId', 'memberHandle', 'roleId'])
-      await deleteResource(resource)
+  }
+
+  getCurrentChallengeId () {
+    let { challengeId } = this.props
+    if (!challengeId) {
+      challengeId = this.state.draftChallenge.data.id
     }
-    if (needToCreateResource) await createResource(newResource)
+    if (!challengeId) {
+      const { history } = this.props
+      const queryParams = queryString.parse(history.location.search)
+      challengeId = queryParams.challengeId
+    }
+    return challengeId
+  }
+
+  /**
+   * Sync AI review config workflows to challenge reviewers array
+   * Maps workflows from AI review config to reviewer objects with aiWorkflowId and isMemberReview=false
+   */
+  async syncAIReviewConfigToReviewers (challengeId) {
+    try {
+      // Fetch the AI review config for this challenge
+      const aiConfig = await fetchAIReviewConfigByChallenge(challengeId)
+
+      if (!aiConfig || !aiConfig.workflows || aiConfig.workflows.length === 0) {
+        // No AI config or workflows, nothing to sync
+        return
+      }
+
+      // Get current reviewers from state
+      const currentReviewers = this.state.challenge.reviewers || []
+
+      // Separate AI reviewers from human reviewers
+      const humanReviewers = currentReviewers.filter(r => {
+        const isAI = (r.aiWorkflowId && r.aiWorkflowId.trim() !== '') || r.isMemberReview === false
+        return !isAI
+      })
+
+      // Create reviewer entries for each workflow in the config
+      const aiReviewers = aiConfig.workflows.map(workflow => ({
+        aiWorkflowId: workflow.workflowId,
+        scorecardId: workflow.workflow.scorecardId,
+        phaseId: '6950164f-3c5e-4bdc-abc8-22aaf5a1bd49',
+        shouldOpenOpportunity: false,
+        isMemberReview: false
+      }))
+
+      // Combine human reviewers with synced AI reviewers
+      const syncedReviewers = [...humanReviewers, ...aiReviewers]
+
+      // Update state with synced reviewers
+      await new Promise(resolve => {
+        this.setState(prevState => ({
+          challenge: {
+            ...prevState.challenge,
+            reviewers: syncedReviewers
+          }
+        }), resolve)
+      })
+
+      console.log('Synced AI review config workflows to reviewers:', aiReviewers.length)
+    } catch (error) {
+      // Log error but don't fail the save operation
+      console.error('Error syncing AI review config to reviewers:', error)
+    }
+  }
+
+  async updateAllChallengeInfo (status, cb = () => { }) {
+    const { updateChallengeDetails, assignedMemberDetails: oldAssignedMember, projectDetail, challengeDetails } = this.props
+    if (this.state.isSaving) return
+    this.setState({ isSaving: true }, async () => {
+      // Sync AI review config workflows to reviewers before collecting challenge data
+      const challengeId = this.getCurrentChallengeId()
+      await this.syncAIReviewConfigToReviewers(challengeId)
+
+      let challenge = this.collectChallengeData(status)
+      let newChallenge = _.cloneDeep(this.state.challenge)
+      newChallenge.status = status
+
+      if (challenge.reviewers && Array.isArray(challenge.reviewers)) {
+        challenge.reviewers = challenge.reviewers.map(reviewer => {
+          if (reviewer.isMemberReview === false) {
+            const copy = { ...reviewer }
+            delete copy.type
+            return copy
+          }
+          return reviewer
+        })
+      }
+
+      try {
+        const challengeId = this.getCurrentChallengeId()
+        // state can have updated assigned member (in cases where user changes assignments without refreshing the page)
+        const { challenge: { copilot, reviewer, type }, assignedMemberDetails: assignedMember } = this.state
+        const oldMemberHandle = _.get(oldAssignedMember, 'handle')
+        const assignedMemberHandle = _.get(assignedMember, 'handle')
+        // assigned member has been updated
+        if (assignedMemberHandle !== oldMemberHandle) {
+          await this.updateResource(challengeId, 'Submitter', assignedMemberHandle, oldMemberHandle)
+        }
+        if (!_.isEqual(challengeDetails.skills, newChallenge.skills)) {
+          await this.updateSkills(challengeId, newChallenge.skills)
+        }
+        const { copilot: previousCopilot, reviewer: previousReviewer } = this.state.draftChallenge.data
+        if (copilot !== previousCopilot) await this.updateResource(challengeId, 'Copilot', copilot, previousCopilot)
+        if (type === 'First2Finish' || type === 'Task') {
+          const iterativeReviewer = this.getResourceFromProps('Iterative Reviewer')
+          const previousIterativeReviewer = iterativeReviewer && iterativeReviewer.memberHandle
+          if (reviewer !== previousIterativeReviewer) await this.updateResource(challengeId, 'Iterative Reviewer', reviewer, previousIterativeReviewer)
+        } else {
+          if (reviewer !== previousReviewer) await this.updateResource(challengeId, 'Reviewer', reviewer, previousReviewer)
+        }
+        const action = await updateChallengeDetails(challengeId, challenge, projectDetail.id)
+        const draftChallenge = { data: action.challengeDetails }
+        draftChallenge.data.copilot = copilot
+        draftChallenge.data.reviewer = reviewer
+        this.setState({
+          isLaunch: true,
+          isConfirm: newChallenge.id,
+          draftChallenge,
+          challenge: newChallenge,
+          isSaving: false
+        }, cb)
+      } catch (e) {
+        const error = this.formatResponseError(e) || `Unable to update the challenge to status ${status}`
+        this.setState({ isSaving: false, error }, cb)
+      }
+    })
+  }
+
+  /**
+   * Format the error we might get from some API endpoint.
+   *
+   * @param {Error} error error
+   *
+   * @returns {import('react').ReactNode}
+   */
+  formatResponseError (error) {
+    const errorMessage = _.get(error, 'response.data.message')
+    const errorMetadata = _.get(error, 'response.data.metadata')
+
+    if (errorMetadata && errorMetadata.missingTerms && errorMetadata.missingTerms.length > 0) {
+      return <>
+        {errorMessage}
+        <ul className={styles.linkList}>{' '}
+          {errorMetadata.missingTerms.map((terms, index) => {
+            const termsNumber = errorMetadata.missingTerms.length > 1 ? ` ${index + 1}` : ''
+            return (
+              <li key={index}><a href={`${COMMUNITY_APP_URL}/challenges/terms/detail/${terms.termId}`} target='_blank'>link to terms{termsNumber}</a></li>
+            )
+          })}
+        </ul>
+      </>
+    }
+
+    // if no special error data, just use message
+    return errorMessage
+  }
+
+  async onActiveChallenge () {
+    this.updateAllChallengeInfo(CHALLENGE_STATUS.ACTIVE)
+  }
+
+  async saveDraft () {
+    this.updateAllChallengeInfo(CHALLENGE_STATUS.DRAFT)
+  }
+
+  async onlySave () {
+    this.updateAllChallengeInfo(this.state.challenge.status)
+  }
+
+  async updateResource (challengeId, name, value, prevValue) {
+    const { resourceRoles } = this.props.metadata
+    const resourceRole = getResourceRoleByName(resourceRoles, name)
+    const roleId = resourceRole.id
+    await this.props.replaceResourceInRole(challengeId, roleId, value, prevValue)
+  }
+
+  async updateSkills (challengeId, skills) {
+    return this.props.updateChallengeSkills(challengeId, skills)
   }
 
   updateAttachmentlist (challenge, attachments) {
@@ -440,24 +1581,86 @@ class ChallengeEditor extends Component {
   }
 
   getResourceFromProps (name) {
-    const { challengeResources } = this.props
-    const role = this.getResourceRoleByName(name)
+    const { challengeResources, metadata: { resourceRoles } } = this.props
+    const role = getResourceRoleByName(resourceRoles, name)
     return challengeResources && role && challengeResources.find(resource => resource.roleId === role.id)
   }
 
+  getCurrentTemplate () {
+    const { currentTemplate, challenge } = this.state
+    if (currentTemplate) {
+      return currentTemplate
+    }
+    const { metadata } = this.props
+    if (!challenge) {
+      return null
+    }
+    return _.find(metadata.timelineTemplates, { id: challenge.timelineTemplateId })
+  }
+
+  /**
+   * Filters the available timeline templates based on the challenge type
+   */
+  getAvailableTimelineTemplates () {
+    const { challenge } = this.state
+    const { metadata } = this.props
+    const { challengeTimelines, timelineTemplates } = metadata
+
+    // all timeline template ids available for the challenge type
+    const availableTemplateIds = _.filter(challengeTimelines, ct => ct.typeId === challenge.typeId && ct.trackId === challenge.trackId).map(tt => tt.timelineTemplateId)
+    // filter and return timeline templates that are available for this challenge type
+    return _.filter(timelineTemplates, tt => availableTemplateIds.indexOf(tt.id) !== -1)
+  }
+
   render () {
-    const { isLaunch, isConfirm, challenge, isOpenAdvanceSettings } = this.state
+    const {
+      isLaunch,
+      isConfirm,
+      showDesignChallengeWarningModel,
+      challenge,
+      draftChallenge,
+      hasForum,
+      isOpenAdvanceSettings,
+      isSaving,
+      isCloseTask
+    } = this.state
     const {
       isNew,
-      isDraft,
+      isBillingAccountExpired,
       isLoading,
       metadata,
-      uploadAttachment,
+      uploadAttachments,
       token,
       removeAttachment,
-      failedToLoad } = this.props
+      cancelChallenge,
+      failedToLoad,
+      errorMessage,
+      projectDetail,
+      attachments,
+      projectPhases,
+      challengeId,
+      assignYourselfCopilot,
+      challengeResources,
+      loggedInUser,
+      challengeDetails,
+      totalSubmissions
+    } = this.props
     if (_.isEmpty(challenge)) {
       return <div>Error loading challenge</div>
+    }
+    const isTask = _.get(challenge, 'task.isTask', false)
+    const { assignedMemberDetails, error } = this.state
+    const communityAppUrl = `${COMMUNITY_APP_URL}/challenges/${challenge.id}`
+    let isActive = false
+    let isDraft = false
+    let isCompleted = false
+    let isNewStatus = false
+    if (challenge.status) {
+      const normalizedStatus = challenge.status.toUpperCase()
+      isDraft = normalizedStatus === CHALLENGE_STATUS.DRAFT
+      isActive = normalizedStatus === CHALLENGE_STATUS.ACTIVE
+      isCompleted = normalizedStatus === CHALLENGE_STATUS.COMPLETED
+      isNewStatus = normalizedStatus === CHALLENGE_STATUS.NEW
     }
     if (isLoading || _.isEmpty(metadata.challengePhases)) return <Loader />
     if (failedToLoad) {
@@ -470,6 +1673,7 @@ class ChallengeEditor extends Component {
               <div className={styles.group}>
                 <div className={styles.row}>
                   <div className={styles.error}>
+                    {errorMessage && <div className={styles.errorMessage}>{`Error : ${errorMessage}`}</div>}
                     Please try again later and if the issue persists contact us at&nbsp;
                     <a href='mailto:support@topcoder.com'>support@topcoder.com</a>
                     &nbsp;to resolve the issue as soon as possible.
@@ -483,7 +1687,11 @@ class ChallengeEditor extends Component {
       )
     }
 
-    let { type } = challenge
+    let activateModal = null
+    let closeTaskModal = null
+    let draftModal = null
+
+    let { type, phases = [] } = challenge
     if (!type) {
       const { typeId } = challenge
       if (typeId && metadata.challengeTypes) {
@@ -494,103 +1702,491 @@ class ChallengeEditor extends Component {
       }
     }
 
-    return (
-      <div className={styles.wrapper}>
-        <Helmet title={getTitle(isNew)} />
-        <div className={styles.title}>{getTitle(isNew)}</div>
-        <div className={styles.textRequired}>* Required</div>
-        <div className={styles.container}>
-          { isLaunch && !isConfirm && (
-            <Modal theme={theme}>
-              <div className={styles.contentContainer}>
-                <div className={styles.title}>Launch Challenge Confirmation</div>
-                <span>{`Do you want to launch ${type} challenge "${challenge.name}"?`}</span>
-                <div className={styles.buttonGroup}>
-                  <div className={styles.button}>
-                    <OutlineButton className={cn({ disabled: this.state.isSaving })} text={'Cancel'} type={'danger'} onClick={() => this.resetModal()} />
-                  </div>
-                  <div className={styles.button}>
-                    <PrimaryButton text={this.state.isSaving ? 'Launching...' : 'Confirm'} type={'info'} onClick={() => this.onSubmitChallenge('Active')} />
-                  </div>
-                </div>
-              </div>
-            </Modal>
-          ) } { isLaunch && isConfirm && (
-            <Modal theme={theme}>
-              <div className={cn(styles.contentContainer, styles.confirm)}>
-                <div className={styles.title}>Success</div>
-                <span>{ challenge.status === 'Draft' ? 'Your challenge is saved as draft' : 'We have scheduled your challenge and processed the payment'}</span>
-                <div className={styles.buttonGroup}>
-                  <div className={styles.buttonSizeA}>
-                    <PrimaryButton text={'Back to Dashboard'} type={'info'} link={'/'} />
-                  </div>
-                  <div className={styles.buttonSizeA} onClick={() => this.resetModal()}>
-                    <OutlineButton text={'View Challenge'} type={'success'} link={`/projects/${this.props.projectId}/challenges/${isConfirm}/edit`} />
-                  </div>
-                </div>
-              </div>
-            </Modal>
-          ) }
-          <div className={styles.formContainer}>
-            <form name='challenge-info-form' noValidate autoComplete='off'>
-              <div className={styles.group}>
-                <TrackField challenge={challenge} onUpdateOthers={this.onUpdateOthers} />
-                <TypeField types={metadata.challengeTypes} onUpdateSelect={this.onUpdateSelect} challenge={challenge} />
-                <ChallengeNameField challenge={challenge} onUpdateInput={this.onUpdateInput} />
-                <CopilotField challenge={challenge} copilots={metadata.members} onUpdateOthers={this.onUpdateOthers} />
-                <ReviewTypeField reviewers={metadata.members} challenge={challenge} onUpdateOthers={this.onUpdateOthers} onUpdateSelect={this.onUpdateSelect} />
-                <div className={styles.row}>
-                  <div className={styles.tcCheckbox}>
-                    <input name='isOpenAdvanceSettings' type='checkbox' id='isOpenAdvanceSettings' checked={isOpenAdvanceSettings} onChange={this.toggleAdvanceSettings} />
-                    <label htmlFor='isOpenAdvanceSettings'>
-                      <div>
-                        View Advance Settings
-                      </div>
-                      <input type='hidden' />
-                    </label>
-                  </div>
-                </div>
-                { isOpenAdvanceSettings && (
-                  <React.Fragment>
-                    <TermsField terms={metadata.challengeTerms} challenge={challenge} onUpdateMultiSelect={this.onUpdateMultiSelect} />
-                    <GroupsField groups={metadata.groups} onUpdateMultiSelect={this.onUpdateMultiSelect} challenge={challenge} />
-                  </React.Fragment>
-                ) }
-                <ChallengeScheduleField templates={metadata.timelineTemplates} challengePhases={metadata.challengePhases} removePhase={this.removePhase} resetPhase={this.resetPhase} challenge={challenge} onUpdateSelect={this.onUpdateSelect} onUpdatePhase={this.onUpdatePhase} onUpdateOthers={this.onUpdateOthers} />
-              </div>
-              <div className={styles.group}>
-                <div className={styles.title}>Detailed Requirements</div>
-                <TextEditorField challengeTags={metadata.challengeTags} challenge={challenge} onUpdateCheckbox={this.onUpdateCheckbox} onUpdateInput={this.onUpdateInput} onUpdateDescription={this.onUpdateDescription} onUpdateMultiSelect={this.onUpdateMultiSelect} />
-                { !isNew && (
-                  <AttachmentField
-                    challenge={challenge}
-                    onUploadFile={uploadAttachment}
-                    token={token}
-                    removeAttachment={removeAttachment}
-                  />
-                )}
-                <ChallengePrizesField challenge={challenge} onUpdateOthers={this.onUpdateOthers} />
-                <CopilotFeeField challenge={challenge} onUpdateOthers={this.onUpdateOthers} />
-                <ChallengeTotalField challenge={challenge} />
-                { this.state.hasValidationErrors && !challenge.prizeSets.length && <div className={styles.error}>Should have at-least 1 prize value</div> }
-              </div>
-            </form>
+    let designChallengeModal
+    if (showDesignChallengeWarningModel) {
+      const messageBody = (
+        <div>
+          <div>
+            At this time, Work Manager only supports single-round (no checkpoint) challenges for design. If you want to run a multi-round (has checkpoints) design challenge, please use Direct.
+          </div>
+          <div>
+            Do you want to proceed with set-up?
           </div>
         </div>
-        {!isLoading && this.state.hasValidationErrors && <div className={styles.error}>Please fix the errors before saving</div>}
-        {!isLoading && <div className={styles.buttonContainer}>
-          <div className={styles.button}>
-            <OutlineButton text={'Cancel'} type={'danger'} link={'/'} />
-          </div>
-          { (isNew || isDraft) && (
+      )
+      designChallengeModal = (
+        <ConfirmationModal
+          title='Reminder'
+          message={messageBody}
+          theme={theme}
+          cancelText='Cancel Set-Up'
+          confirmText='Continue Set-Up'
+          onCancel={this.resetDesignChallengeWarningModal}
+          onConfirm={this.createNewDesignChallenge}
+        />
+      )
+    }
+    if (!isNew && isLaunch && !isConfirm) {
+      activateModal = (
+        <ConfirmationModal
+          title='Confirm Launch'
+          message={`Do you want to launch "${challenge.name}"?`}
+          theme={theme}
+          isProcessing={this.state.isSaving}
+          errorMessage={this.state.error}
+          onCancel={this.resetModal}
+          onConfirm={this.onActiveChallenge}
+          disableConfirmButton={isBillingAccountExpired}
+        />
+      )
+    }
+
+    /*
+      Closing Task Confirmation Modal and Error Modal
+    */
+    if (isCloseTask && !isConfirm) {
+      const taskPrize = _.get(_.find(challenge.prizeSets, { type: 'PLACEMENT' }), 'prizes[0].value')
+      const assignedMemberId = _.get(assignedMemberDetails, 'userId')
+      const assignedMember = _.get(assignedMemberDetails, 'handle', `User Id: ${assignedMemberId}`)
+
+      const validationErrors = []
+      if (!assignedMemberId) {
+        validationErrors.push('assign task member')
+      }
+
+      // if all data for closing task is there, show confirmation modal
+      if (validationErrors.length === 0) {
+        closeTaskModal = (
+          <ConfirmationModal
+            title='Complete Task Confirmation'
+            message={
+              <p className={styles.textCenter}>
+                Are you sure want to complete task <strong>"{challenge.name}"</strong> with the prize <strong>${taskPrize}</strong> for <strong>{assignedMember}</strong>?
+              </p>
+            }
+            theme={theme}
+            isProcessing={this.state.isSaving}
+            errorMessage={this.state.error}
+            onCancel={this.resetModal}
+            onConfirm={this.onCloseTask}
+          />
+        )
+
+        // if some information for closing task is missing, ask to complete it
+      } else {
+        const formattedErrors = validationErrors.length === 1 ? validationErrors[0] : (
+          validationErrors.slice(0, -1).join(', ') + ' and ' + validationErrors[validationErrors.length - 1]
+        )
+        closeTaskModal = (
+          <AlertModal
+            title='Cannot Close Task'
+            message={`Please, ${formattedErrors} before closing task.`}
+            theme={theme}
+            closeText='OK'
+            onClose={this.resetModal}
+          />
+        )
+      }
+    }
+    if (!isNew && !isNewStatus && isLaunch && isConfirm) {
+      draftModal = (
+        <AlertModal
+          title='Success'
+          message={
+            isDraft
+              ? 'Your challenge is saved as draft'
+              : 'We have scheduled your challenge and processed the payment'
+          }
+          theme={theme}
+          closeText='Close'
+          closeLink='./view'
+          okText='Preview'
+          onOk={() => {
+            window.open(communityAppUrl, '_blank')
+          }}
+          onClose={this.resetModal}
+        />
+      )
+    }
+    const statusMessage = challenge.status && challenge.status.split(' ')[0].toUpperCase()
+    const errorContainer = <div className={styles.errorContainer}><div className={styles.errorMessage}>{error}</div></div>
+
+    // Make sure that the Launch and Mark as completed buttons are hidden
+    // for tasks that are assigned to the current logged in user, if that user has the copilot role.
+    const preventCopilotFromActivatingTask = isTask &&
+      checkCopilot(token) &&
+      assignedMemberDetails &&
+      loggedInUser &&
+      `${loggedInUser.userId}` === `${assignedMemberDetails.userId}`
+
+    const challengeDetailsStatus = _.get(challengeDetails, 'status', '')
+    const normalizedChallengeDetailsStatus = challengeDetailsStatus ? challengeDetailsStatus.toUpperCase() : ''
+    const canDeleteChallenge = !isNew && normalizedChallengeDetailsStatus === CHALLENGE_STATUS.NEW
+
+    const actionButtons = <React.Fragment>
+      {!isLoading && this.state.hasValidationErrors && <div className={styles.error}>Please fix the errors before saving</div>}
+      {
+        isNew && (
+          <div className={styles.buttonContainer}>
             <div className={styles.button}>
-              <OutlineButton text={this.state.isSaving ? 'Saving...' : 'Save as Draft'} type={'success'} onClick={this.saveDraft} />
+              <OutlineButton text={'Continue Set-Up'} type={'success'} submit disabled={isSaving} />
             </div>
-          ) }
-          <div className={styles.button}>
-            <PrimaryButton text={(isNew || isDraft) ? 'Launch' : 'Update'} type={'info'} onClick={this.toggleLaunch} />
           </div>
-        </div>}
+        )
+      }
+      {
+        !isNew && (
+          <div className={styles.bottomContainer}>
+            {!isLoading && <LastSavedDisplay timeLastSaved={draftChallenge.data.updated} />}
+            {!isLoading && (!isActive) && (!isCompleted) && <div className={styles.buttonContainer}>
+              <div className={styles.button}>
+                {!this.state.hasValidationErrors ? (
+                  <PrimaryButton text={isSaving ? 'Saving...' : 'Save Draft'} type={'info'} onClick={this.createDraftHandler} />
+                ) : (
+                  <PrimaryButton text={'Save Draft'} type={'disabled'} />
+                )}
+              </div>
+              {
+                (
+                  isDraft &&
+                  !preventCopilotFromActivatingTask
+                ) && (
+                  <div className={styles.button}>
+                    {!this.state.hasValidationErrors ? (
+                      <PrimaryButton text={'Launch as Active'} type={'info'} onClick={this.toggleLaunch} />
+                    ) : (
+                      <PrimaryButton text={'Launch as Active'} type={'disabled'} />
+                    )}
+                  </div>
+                )
+              }
+              {statusMessage !== CHALLENGE_STATUS.CANCELLED &&
+                <div className={styles.button}>
+                  <CancelDropDown challenge={challenge} onSelectMenu={cancelChallenge} />
+                </div>
+              }
+            </div>}
+            {(!isLoading) && isActive && (!preventCopilotFromActivatingTask) && <div className={styles.buttonContainer}>
+              <div className={styles.button}>
+                <OutlineButton text={isSaving ? 'Saving...' : 'Save'} type={'success'} onClick={this.onSaveChallenge} />
+              </div>
+              {(
+                isTask &&
+                !preventCopilotFromActivatingTask
+              ) && (
+                <div className={styles.button}>
+                  <Tooltip content={MESSAGE.MARK_COMPLETE}>
+                    <PrimaryButton text={'Mark Complete'} type={'success'} onClick={this.openCloseTaskConfirmation} />
+                  </Tooltip>
+                </div>
+              )}
+            </div>}
+          </div>
+        )
+      }
+    </React.Fragment>
+    const useTask = _.find(metadata.challengeTypes, { id: challenge.typeId, isTask: true })
+    const selectedType = _.find(metadata.challengeTypes, { id: challenge.typeId })
+    const challengeTrack = _.find(metadata.challengeTracks, { id: challenge.trackId })
+    const selectedMilestone = _.find(projectPhases,
+      phase => _.find(_.get(phase, 'products', []),
+        product => _.get(product, PHASE_PRODUCT_CHALLENGE_ID_FIELD) === challengeId
+      )
+    )
+    const selectedMilestoneId = challenge.milestoneId || _.get(selectedMilestone, 'id')
+    const activeProjectMilestones = projectPhases.filter(phase => phase.status === MILESTONE_STATUS.ACTIVE)
+    const currentChallengeId = this.getCurrentChallengeId()
+    const showTimeline = false // disables the timeline for time being https://github.com/topcoder-platform/challenge-engine-ui/issues/706
+    const copilotResources = metadata.members || challengeResources
+    const isDesignChallenge = challenge.trackId === DES_TRACK_ID
+    const isChallengeType = challenge.typeId === CHALLENGE_TYPE_ID
+    const isMarathonMatch = challenge.typeId === MARATHON_TYPE_ID
+    const isFunChallenge = challenge.funChallenge === true
+    const showRoundType = isDesignChallenge && isChallengeType
+    const showCheckpointPrizes = challenge.timelineTemplateId === MULTI_ROUND_CHALLENGE_TEMPLATE_ID
+    const isAiReviewerConfigReadOnly = totalSubmissions > 0
+    const useDashboardData = _.find(challenge.metadata, { name: 'show_data_dashboard' })
+    const showDashBoard = this.shouldShowDashboardSetting(challenge)
+
+    const useDashboard = useDashboardData
+      ? (_.isString(useDashboardData.value) && useDashboardData.value === 'true') ||
+      (_.isBoolean(useDashboardData.value) && useDashboardData.value) : false
+
+    const dashboardToggle = showDashBoard && (
+      <div className={styles.row}>
+        <div className={cn(styles.field, styles.col1)}>
+          <label htmlFor='isDashboardEnabled'>Use data dashboard :</label>
+        </div>
+        <div className={cn(styles.field, styles.col2)}>
+          <input
+            name='isDashboardEnabled'
+            type='checkbox'
+            id='isDashboardEnabled'
+            checked={useDashboard}
+            onChange={(e) => this.onUpdateMetadata('show_data_dashboard', e.target.checked)}
+          />
+        </div>
+      </div>
+    )
+
+    const workTypes = getDomainTypes(challenge.trackId)
+    let filteredTypes = metadata.challengeTypes.filter(type => workTypes.includes(type.abbreviation))
+
+    if (challenge.trackId === DEV_TRACK_ID) {
+      const topgearTypes = metadata.challengeTypes.filter(type => type.name && type.name.toLowerCase() === 'topgear task')
+      filteredTypes = _.uniqBy([...filteredTypes, ...topgearTypes], 'id')
+    }
+
+    if (selectedType && !filteredTypes.find(type => type.id === selectedType.id)) {
+      filteredTypes = [...filteredTypes, selectedType]
+    }
+
+    const challengeForm = isNew
+      ? (
+        <form name='challenge-new-form' noValidate autoComplete='off' onSubmit={this.createChallengeHandler}>
+          <div className={styles.newFormContainer}>
+            <TrackField tracks={metadata.challengeTracks} challenge={challenge} onUpdateOthers={this.onUpdateOthers} />
+            <TypeField types={filteredTypes} onUpdateSelect={this.onUpdateSelect} challenge={challenge} />
+            {
+              showRoundType && (
+                <>
+                  <RoundTypeField roundType={challenge.roundType} onUpdateOthers={this.onUpdateOthers} />
+                  <ChallengeTypeField types={DESIGN_CHALLENGE_TYPES} onUpdateSelect={this.onUpdateSelect} challenge={challenge} />
+                </>
+              )
+            }
+            <ChallengeNameField challenge={challenge} onUpdateInput={this.onUpdateInput} />
+            {
+              dashboardToggle
+            }
+            {projectDetail.version === 'v4' && <MilestoneField milestones={activeProjectMilestones} onUpdateSelect={this.onUpdateSelect} projectId={projectDetail.id} selectedMilestoneId={selectedMilestoneId} />}
+            {useTask && (<DiscussionField hasForum={hasForum} toggleForum={this.toggleForumOnCreate} />)}
+          </div>
+          {showDesignChallengeWarningModel && designChallengeModal}
+          {errorContainer}
+          {actionButtons}
+        </form>
+      ) : (
+        <form name='challenge-info-form' noValidate autoComplete='off' onSubmit={(e) => e.preventDefault()}>
+          <div className={styles.group}>
+
+            <div className={cn(styles.row, styles.topRow)}>
+              <div className={styles.col}>
+                <span>
+                  <span className={styles.fieldTitle}>Project: {projectDetail ? projectDetail.name : ''}</span>
+                </span>
+              </div>
+              <div className={styles.col}>
+                <span className={styles.fieldTitle}>Domain:</span>
+                <Track disabled type={challengeTrack} isActive key={challenge.trackId} onUpdateOthers={() => { }} />
+              </div>
+              <div className={styles.col}>
+                <span><span className={styles.fieldTitle}>Type:</span> {selectedType ? selectedType.name : ''}</span>
+              </div>
+              <div className={styles.col}>
+                <span><span className={styles.fieldTitle}>Status:</span> {challenge.status}</span>
+              </div>
+            </div>
+
+            <ChallengeNameField challenge={challenge} onUpdateInput={this.onUpdateInput} />
+            {isTask && (
+              <AssignedMemberField
+                challenge={challenge}
+                onChange={this.onUpdateAssignedMember}
+                assignedMemberDetails={assignedMemberDetails}
+                onAssignSelf={this.onAssignSelf}
+              />
+            )}
+            {projectDetail.version === 'v4' && <MilestoneField milestones={activeProjectMilestones} onUpdateSelect={this.onUpdateSelect} projectId={projectDetail.id} selectedMilestoneId={selectedMilestoneId} />}
+            <CopilotField challenge={challenge} copilots={copilotResources} onUpdateOthers={this.onUpdateOthers} assignYourselfCopilot={assignYourselfCopilot} loggedInUser={loggedInUser} />
+            <ReviewTypeField
+              challenge={challenge}
+              onUpdateOthers={this.onUpdateOthers}
+            />
+            <div className={styles.row}>
+              <div className={styles.tcCheckbox}>
+                <input
+                  name='isOpenAdvanceSettings'
+                  type='checkbox'
+                  id='isOpenAdvanceSettings'
+                  checked={isOpenAdvanceSettings}
+                  onChange={this.toggleAdvanceSettings}
+                />
+                <label htmlFor='isOpenAdvanceSettings'>
+                  <div>View Advanced Settings</div>
+                  <input type='hidden' />
+                </label>
+              </div>
+            </div>
+            {isOpenAdvanceSettings && (
+              <React.Fragment>
+                {dashboardToggle}
+                <NDAField challenge={challenge} toggleNdaRequire={this.toggleNdaRequire} />
+                {/* remove terms field and use default term */}
+                {false && (<TermsField terms={metadata.challengeTerms} challenge={challenge} onUpdateMultiSelect={this.onUpdateMultiSelect} />)}
+                <GroupsField onUpdateMultiSelect={this.onUpdateMultiSelect} challenge={challenge} />
+                <WiproAllowedField challenge={challenge} onUpdateOthers={this.onUpdateOthers} />
+                <div className={styles.row}>
+                  <div className={styles.col}>
+                    <span>
+                      <span className={styles.fieldTitle}>Billing Account Id:</span>
+                      {projectDetail.billingAccountId}
+                    </span>
+                    {isBillingAccountExpired && <span className={styles.expiredMessage}>Expired</span>}
+                  </div>
+                </div>
+                {isBetaMode() && (
+                  <UseSchedulingAPIField challenge={challenge} toggleUseSchedulingAPI={this.toggleUseSchedulingAPI} />
+                )}
+              </React.Fragment>
+            )}
+            {!isTask && (
+            <>
+              <div className={styles.row}>
+                <div className={styles.col}>
+                  <span className={styles.fieldTitle}>Timezone:</span>
+                  {Intl.DateTimeFormat().resolvedOptions().timeZone}
+                </div>
+              </div>
+              {
+                (() => {
+                  const hasRealAiScreeningPhase = phases.some(p => p.name === AI_SCREENING_PHASE_NAME)
+                  const showVirtualAiScreening = hasAiReviewers(challenge.reviewers) && !hasRealAiScreeningPhase
+                  const submissionIndex = phases.findIndex(p => p.name === 'Submission')
+                  const checkpointSubmissionIndex = phases.findIndex(p => p.name === 'Checkpoint Submission')
+                  return (
+                    <>
+                      {phases.map((phase, index) => (
+                        <React.Fragment key={index}>
+                          <PhaseInput
+                            phase={phase}
+                            phaseIndex={index}
+                            readOnly={false}
+                            onUpdatePhase={(item) => {
+                              this.onUpdatePhaseDate(item, index)
+                            }}
+                          />
+                          {showVirtualAiScreening && (index === submissionIndex || index === checkpointSubmissionIndex) && (
+                            <PhaseInput
+                              phase={{ name: AI_SCREENING_PHASE_NAME }}
+                              readOnly
+                              isVirtual
+                            />
+                          )}
+                        </React.Fragment>
+                      ))}
+                      {showVirtualAiScreening && (submissionIndex === -1 || checkpointSubmissionIndex === -1) && (
+                        <PhaseInput
+                          phase={{ name: AI_SCREENING_PHASE_NAME }}
+                          readOnly
+                          isVirtual
+                        />
+                      )}
+                    </>
+                  )
+                })()
+              }
+            </>
+            )}
+            {
+              this.state.isDeleteLaunch && !this.state.isConfirm && (
+                <ConfirmationModal
+                  title='Confirm Delete'
+                  message={`Do you want to delete "${challenge.name}"?`}
+                  theme={theme}
+                  isProcessing={isSaving}
+                  errorMessage={this.state.error}
+                  onCancel={this.resetModal}
+                  onConfirm={this.onDeleteChallenge}
+                />
+              )
+            }
+            {showTimeline && (
+              <ChallengeScheduleField
+                templates={this.getAvailableTimelineTemplates()}
+                challengePhases={metadata.challengePhases}
+                removePhase={this.removePhase}
+                resetPhase={this.resetPhase}
+                savePhases={this.savePhases}
+                challenge={challenge}
+                onUpdateSelect={this.onUpdateSelect}
+                onUpdatePhase={this.onUpdatePhase}
+                onUpdateOthers={this.onUpdateOthers}
+                currentTemplate={this.getCurrentTemplate()}
+              />
+            )}
+          </div>
+          <div className={styles.group}>
+            <div className={styles.title}>Public specification<span>*</span></div>
+            <div className={styles.templateLink}>
+              <i>Access specification templates <a href='https://github.com/topcoder-platform-templates/specification-templates' target='_blank'>here</a></i>
+            </div>
+            <TextEditorField
+              challenge={challenge}
+              onUpdateCheckbox={this.onUpdateCheckbox}
+              addFileType={this.addFileType}
+              removeFileType={this.removeFileType}
+              onUpdateInput={this.onUpdateInput}
+              onUpdateDescription={this.onUpdateDescription}
+              onUpdateSkills={this.onUpdateSkills}
+              onUpdateMultiSelect={this.onUpdateMultiSelect}
+              onUpdateMetadata={this.onUpdateMetadata}
+              showReviewerField={!isTask}
+              onUpdateReviewers={this.onUpdateOthers}
+              aiReviewerReadOnly={isAiReviewerConfigReadOnly}
+            />
+            {/* hide until challenge API change is pushed to PROD https://github.com/topcoder-platform/challenge-api/issues/348 */}
+            {false && <AttachmentField
+              challenge={{ ...challenge, id: currentChallengeId }}
+              challengeId={currentChallengeId}
+              attachments={attachments}
+              onUploadFiles={uploadAttachments}
+              token={token}
+              removeAttachment={removeAttachment}
+            />}
+            {isMarathonMatch && (
+              <FunChallengeField challenge={challenge} onUpdateOthers={this.onUpdateOthers} />
+            )}
+            {!isFunChallenge && (
+              <>
+                <ChallengePrizesField challenge={challenge} onUpdateOthers={this.onUpdateOthers} />
+                {
+                  showCheckpointPrizes && (
+                    <CheckpointPrizesField onUpdateOthers={this.onUpdateOthers} challenge={challenge} />
+                  )
+                }
+                <CopilotFeeField challenge={challenge} onUpdateOthers={this.onUpdateOthers} />
+                <ChallengeTotalField challenge={challenge} />
+              </>
+            )}
+          </div>
+          {errorContainer}
+          {actionButtons}
+        </form>
+      )
+
+    return (
+      <div className={styles.wrapper}>
+        <Helmet title={getTitle(isNew, challenge)} />
+        <div className={styles.topContainer}>
+          <div className={styles.leftContainer}>
+            <div className={styles.title}>{getTitle(isNew, challenge)}</div>
+            {!isNew && <LegacyLinks challenge={challenge} />}
+          </div>
+          <div className={cn(styles.actionButtons, styles.actionButtonsRight)}>
+            {canDeleteChallenge && <PrimaryButton text={'Delete'} type={'danger'} onClick={this.deleteModalLaunch} />}
+            <PrimaryButton text={'Back'} type={'info'} submit link={`/projects/${projectDetail.id}/challenges`} />
+          </div>
+        </div>
+        <div className={styles.textRequired}>* Required</div>
+        <div className={styles.container}>
+          {activateModal}
+          {draftModal}
+          {closeTaskModal}
+          <div className={styles.formContainer}>
+            {challengeForm}
+          </div>
+        </div>
       </div>
     )
   }
@@ -600,23 +2196,39 @@ ChallengeEditor.defaultProps = {
   challengeId: null,
   attachments: [],
   failedToLoad: false,
-  challengeResources: {}
+  challengeResources: {},
+  projectDetail: {}
 }
 
 ChallengeEditor.propTypes = {
   challengeDetails: PropTypes.object,
+  projectDetail: PropTypes.object,
   challengeResources: PropTypes.arrayOf(PropTypes.object),
   isNew: PropTypes.bool.isRequired,
-  isDraft: PropTypes.bool.isRequired,
+  isBillingAccountExpired: PropTypes.bool,
   projectId: PropTypes.string.isRequired,
   challengeId: PropTypes.string,
   metadata: PropTypes.object.isRequired,
   isLoading: PropTypes.bool.isRequired,
-  uploadAttachment: PropTypes.func.isRequired,
+  uploadAttachments: PropTypes.func.isRequired,
+  cancelChallenge: PropTypes.func.isRequired,
   removeAttachment: PropTypes.func.isRequired,
   attachments: PropTypes.arrayOf(PropTypes.shape()),
   token: PropTypes.string.isRequired,
-  failedToLoad: PropTypes.bool
+  failedToLoad: PropTypes.bool,
+  errorMessage: PropTypes.string,
+  history: PropTypes.any.isRequired,
+  assignedMemberDetails: PropTypes.shape(),
+  updateChallengeDetails: PropTypes.func.isRequired,
+  createChallenge: PropTypes.func,
+  replaceResourceInRole: PropTypes.func,
+  updateChallengeSkills: PropTypes.func,
+  partiallyUpdateChallengeDetails: PropTypes.func.isRequired,
+  deleteChallenge: PropTypes.func.isRequired,
+  loggedInUser: PropTypes.shape().isRequired,
+  projectPhases: PropTypes.arrayOf(PropTypes.object).isRequired,
+  assignYourselfCopilot: PropTypes.func.isRequired,
+  totalSubmissions: PropTypes.number
 }
 
-export default ChallengeEditor
+export default withRouter(ChallengeEditor)

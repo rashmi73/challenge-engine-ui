@@ -1,0 +1,688 @@
+/* eslint jsx-a11y/no-static-element-interactions:0 */
+/**
+ * Submissions tab component.
+ */
+
+import React from 'react'
+import PT from 'prop-types'
+import moment from 'moment'
+import _ from 'lodash'
+import { PAGINATION_PER_PAGE_OPTIONS, STUDIO_URL, SUBMISSION_REVIEW_APP_URL, getTCMemberURL } from '../../../config/constants'
+import { PrimaryButton } from '../../Buttons'
+import AlertModal from '../../Modal/AlertModal'
+import cn from 'classnames'
+import ReactSVG from 'react-svg'
+import {
+  getRatingLevel,
+  checkDownloadSubmissionRoles,
+  checkAdmin
+} from '../../../util/tc'
+import {
+  isValidDownloadFile
+} from '../../../util/topcoder-react-lib'
+import {
+  compressFiles
+} from '../../../util/files'
+import styles from './Submissions.module.scss'
+import modalStyles from '../../../styles/modal.module.scss'
+import { ArtifactsListModal } from '../ArtifactsListModal'
+import Tooltip from '../../Tooltip'
+import { RatingsListModal } from '../RatingsListModal'
+import Select from '../../Select'
+import Pagination from 'react-js-pagination'
+import { getSubmissionsService } from '../../../services/submissions'
+import { searchProfilesByUserIds } from '../../../services/user'
+const assets = require.context('../../../assets/images', false, /svg/)
+const Lock = './lock.svg'
+const Download = './IconSquareDownload.svg'
+const DownloadArtifact = './IconDownloadArtifacts.svg'
+const ReviewRatingList = './IconReviewRatingList.svg'
+
+const theme = {
+  container: modalStyles.modalContainer
+}
+
+class SubmissionsComponent extends React.Component {
+  constructor (props) {
+    super(props)
+    this.state = {
+      submissionsSort: {
+        field: '',
+        sort: ''
+      },
+      isShowInformation: false,
+      memberOfModal: '',
+      submissions: [],
+      downloadingAll: false,
+      alertMessage: '',
+      selectedSubmissionId: '',
+      showArtifactsListModal: false,
+      showRatingsListModal: false,
+      memberDetails: {}
+    }
+    this.pendingMemberIds = new Set()
+    this._isMounted = false
+    this.checkIsReviewPhaseComplete = this.checkIsReviewPhaseComplete.bind(
+      this
+    )
+    this.downloadSubmission = this.downloadSubmission.bind(this)
+    this.handlePageChange = this.handlePageChange.bind(this)
+    this.handlePerPageChange = this.handlePerPageChange.bind(this)
+    this.loadMemberDetails = this.loadMemberDetails.bind(this)
+  }
+
+  componentDidMount () {
+    this._isMounted = true
+    this.loadMemberDetails(this.props.submissions)
+  }
+
+  componentDidUpdate (prevProps) {
+    if (!_.isEqual(prevProps.submissions, this.props.submissions)) {
+      this.loadMemberDetails(this.props.submissions)
+    }
+  }
+
+  componentWillUnmount () {
+    this._isMounted = false
+  }
+
+  /**
+   * Check if review phase complete
+   */
+  checkIsReviewPhaseComplete () {
+    const { challenge } = this.props
+
+    const allPhases = challenge.phases || []
+
+    let isReviewPhaseComplete = false
+    _.forEach(allPhases, phase => {
+      if (
+        phase.name === 'Review' &&
+        !phase.isOpen &&
+        moment(phase.scheduledStartDate).isBefore()
+      ) {
+        isReviewPhaseComplete = true
+      }
+    })
+    return isReviewPhaseComplete
+  }
+
+  closeArtifactsModal () {
+    this.setState({
+      selectedSubmissionId: '',
+      showArtifactsListModal: false
+    })
+  }
+
+  async downloadSubmission (submission) {
+    // download submission
+    const submissionsService = getSubmissionsService(this.props.token)
+    submissionsService.downloadSubmission(submission.id)
+      .then((blob) => {
+        isValidDownloadFile(blob).then((isValidFile) => {
+          if (isValidFile.success) {
+            // eslint-disable-next-line no-undef
+            const url = window.URL.createObjectURL(new Blob([blob]))
+            const link = document.createElement('a')
+            link.href = url
+            let fileName = submission.legacySubmissionId
+            if (!fileName) {
+              fileName = submission.id
+            }
+            fileName = fileName + '.zip'
+            link.setAttribute('download', `${fileName}`)
+            document.body.appendChild(link)
+            link.click()
+            link.parentNode.removeChild(link)
+          } else {
+            this.setState({
+              alertMessage: isValidFile.message || 'Can not download this submission.'
+            })
+          }
+        })
+      })
+  }
+
+  /**
+   * Update filter for getting project by pagination
+   * @param {Number} perPageNumber per page number
+   */
+  handlePerPageChange (option) {
+    const perPageNumber = option.value
+    const {
+      submissionsPerPage,
+      loadSubmissions,
+      challenge: {
+        id
+      }
+    } = this.props
+
+    if (submissionsPerPage !== perPageNumber) {
+      loadSubmissions(id, {
+        page: 1,
+        perPage: perPageNumber
+      })
+    }
+  }
+
+  async loadMemberDetails (submissions = []) {
+    const memberIds = []
+    submissions.forEach(submission => {
+      const submissionMemberId = submission.memberId || _.get(submission, 'registrant.memberId') || _.get(submission, 'registrant.userId')
+      if (!_.isNil(submissionMemberId)) {
+        memberIds.push(String(submissionMemberId))
+      }
+    })
+
+    const uniqueMemberIds = _.uniq(memberIds)
+    const { memberDetails } = this.state
+
+    const missingMemberIds = uniqueMemberIds.filter(memberId => (
+      _.isUndefined(memberDetails[memberId]) && !this.pendingMemberIds.has(memberId)
+    ))
+
+    if (!missingMemberIds.length) {
+      return
+    }
+
+    missingMemberIds.forEach(memberId => this.pendingMemberIds.add(memberId))
+
+    try {
+      const members = await searchProfilesByUserIds(missingMemberIds, 'userId,handle,email,maxRating')
+      const updatedMemberDetails = { ...memberDetails }
+
+      members.forEach(member => {
+        if (member && !_.isNil(member.userId)) {
+          const memberIdKey = String(member.userId)
+          updatedMemberDetails[memberIdKey] = member
+          this.pendingMemberIds.delete(memberIdKey)
+        }
+      })
+
+      missingMemberIds.forEach(memberId => {
+        if (!Object.prototype.hasOwnProperty.call(updatedMemberDetails, memberId)) {
+          updatedMemberDetails[memberId] = null
+        }
+        this.pendingMemberIds.delete(memberId)
+      })
+
+      if (this._isMounted) {
+        this.setState({ memberDetails: updatedMemberDetails })
+      }
+    } catch (error) {
+      const updatedMemberDetails = { ...memberDetails }
+      missingMemberIds.forEach(memberId => {
+        if (!Object.prototype.hasOwnProperty.call(updatedMemberDetails, memberId)) {
+          updatedMemberDetails[memberId] = null
+        }
+        this.pendingMemberIds.delete(memberId)
+      })
+
+      if (this._isMounted) {
+        this.setState({ memberDetails: updatedMemberDetails })
+      }
+    }
+  }
+
+  /**
+   * Update filter for getting project by pagination
+   * @param {Number} pageNumber page number
+   */
+  async handlePageChange (pageNumber) {
+    const {
+      page,
+      submissionsPerPage,
+      loadSubmissions,
+      challenge: {
+        id
+      }
+    } = this.props
+
+    if (page !== pageNumber) {
+      loadSubmissions(id, {
+        page: pageNumber,
+        perPage: submissionsPerPage
+      })
+    }
+  }
+
+  render () {
+    const { challenge, token, loggedInUserResource, page, submissionsPerPage, totalSubmissions, submissions } = this.props
+    const { checkpoints, track, type, tags } = challenge
+    const canDownloadSubmission =
+      (loggedInUserResource && checkDownloadSubmissionRoles(loggedInUserResource.roles)) ||
+      checkAdmin(token)
+
+    const { downloadingAll, alertMessage, memberDetails } = this.state
+
+    const renderSubmission = s => {
+      const createdAt = s.createdAt || s.created || s.submissionTime
+      const createdAtDisplay = createdAt ? moment(createdAt).format('MMM DD, YYYY HH:mm') : 'N/A'
+      return (
+        <div className={styles.submission} key={s.id}>
+          <a
+            href={`${STUDIO_URL}?module=DownloadSubmission&sbmid=${s.id}`}
+            target='_blank'
+            rel='noopener noreferrer'
+          >
+            <img
+              alt=''
+              src={`${STUDIO_URL}/studio.jpg?module=DownloadSubmission&sbmid=${s.id}&sbt=small&sfi=1`}
+            />
+          </a>
+          <div className={styles['bottom-info']}>
+            <div className={styles['links']}>
+              <a
+                href={`${STUDIO_URL}?module=DownloadSubmission&sbmid=${s.id}`}
+                target='_blank'
+                rel='noopener noreferrer'
+              >
+                {`#${s.id}`}
+              </a>
+              <a
+                href={getTCMemberURL(_.get(s.registrant, 'memberHandle', ''))}
+                target={`${
+                  _.includes(window.origin, 'www') ? '_self' : '_blank'
+                }`}
+                rel='noopener noreferrer'
+                className={cn(styles[`level-${getRatingLevel(_.get(s.registrant, 'rating', 0))}`])} >
+                {_.get(s.registrant, 'memberHandle', '')}
+              </a>
+            </div>
+            <div>{createdAtDisplay}</div>
+          </div>
+        </div>
+      )
+    }
+
+    const isF2F = type === 'First2Finish'
+    const isBugHunt = _.includes(tags, 'Bug Hunt')
+
+    // copy colorStyle from registrants to submissions
+    _.forEach(submissions, s => {
+      if (s.registrant && s.registrant.colorStyle && !s.colorStyle) {
+        const { colorStyle } = s.registrant
+        /* eslint-disable no-param-reassign */
+        s.colorStyle = JSON.parse(
+          colorStyle.replace(/(\w+):\s*([^;]*)/g, '{"$1": "$2"}')
+        )
+        /* eslint-enable no-param-reassign */
+      }
+
+      if (s.registrant && s.registrant.rating && !s.rating) {
+        const { rating } = s.registrant
+        /* eslint-disable no-param-reassign */
+        s.rating = rating
+        /* eslint-enable no-param-reassign */
+      }
+    })
+
+    let checkpointsUI = null
+    // Normalize track to a string before comparison; handle objects or missing values gracefully
+    const normalizedTrack = (
+      typeof track === 'string'
+        ? track
+        : (track && (track.track || track.name || track.abbreviation)) || ''
+    ).toString()
+    if (normalizedTrack.toLowerCase() === 'design') {
+      if (challenge.submissionViewable === 'true') {
+        checkpointsUI = (
+          <div className={cn(styles.container, styles.view)}>
+            <div className={styles['title']}>ROUND 2 (FINAL) SUBMISSIONS</div>
+            <div className={styles['content']}>
+              {submissions.map(renderSubmission)}
+            </div>
+            {checkpoints.length > 0 && (
+              <div className={styles['title']}>
+                ROUND 1 (CHECKPOINT) SUBMISSIONS
+              </div>
+            )}
+            {checkpoints.length > 0 && (
+              <div className={styles['content']}>
+                {checkpoints.map(renderSubmission)}
+              </div>
+            )}
+          </div>
+        )
+      } else if (!canDownloadSubmission) {
+        return (
+          <div className={cn(styles['container'], styles['no-view'])}>
+            <ReactSVG className={styles['lock']} path={assets(`${Lock}`)} />
+            <div className={styles['title']}>Private Challenge</div>
+            <div className={styles['subtitle']}>
+              Submissions are not viewable for this challenge
+            </div>
+            <div className={styles['desc']}>
+              There are many reason why the submissions may not be viewable, such
+              as the allowance of stock art, or a client&apos;s desire to keep the
+              work private.
+            </div>
+          </div>
+        )
+      }
+    }
+
+    return (
+      <>
+        {checkpointsUI}
+
+        <div className={cn(styles.container, styles.dev, styles['non-mm'])}>
+          {canDownloadSubmission ? (<div className={styles['empty-left']} />) : null}
+          <div className={styles.submissionsContainerTable}>
+            <table>
+              <thead className={styles.headTable}>
+                <tr>
+                  {!isF2F && !isBugHunt && (
+                    <th>
+                      <span>Rating</span>
+                    </th>
+                  )}
+                  <th>
+                    <span>Username</span>
+                  </th>
+                  <th>
+                    <span>Email</span>
+                  </th>
+                  <th>
+                    <span>Submission Date</span>
+                  </th>
+                  <th>
+                    <span>Initial / Final Score</span>
+                  </th>
+                  <th
+                    className={cn(styles['col-6Table'])}
+                  >
+                    <span>Submission ID (UUID)</span>
+                  </th>
+                  {canDownloadSubmission ? (<th
+                    className={cn(styles['col-8Table'])}
+                  >
+                    <span>Actions</span>
+                  </th>) : null}
+                </tr>
+              </thead>
+              <tbody>
+                {submissions.length === 0 ? (
+                  <tr>
+                    <td
+                      className={cn(styles['col-bodyTable'])}
+                      colSpan={5 + (!isF2F && !isBugHunt ? 1 : 0) + (canDownloadSubmission ? 1 : 0)}
+                    >
+                      No submissions received for this challenge yet
+                    </td>
+                  </tr>
+                ) : submissions.map(s => {
+                  const memberId = s.memberId || _.get(s, 'registrant.memberId') || _.get(s, 'registrant.userId')
+                  const memberInfo = memberId ? memberDetails[String(memberId)] : undefined
+                  const ratingFromMemberInfo = _.get(memberInfo, 'maxRating.rating')
+                  const fallbackRating = !_.isNil(s.rating) ? s.rating : _.get(s, 'registrant.rating')
+                  const rawRating = !_.isNil(ratingFromMemberInfo) ? ratingFromMemberInfo : fallbackRating
+                  const parsedRating = _.isNil(rawRating) || rawRating === '' ? null : Number(rawRating)
+                  const hasValidRating = !_.isNil(parsedRating) && !Number.isNaN(parsedRating)
+                  const ratingDisplay = hasValidRating ? parsedRating : '-'
+                  const ratingLevel = getRatingLevel(hasValidRating ? parsedRating : 0)
+                  const memberHandle = _.get(memberInfo, 'handle', _.get(s, 'registrant.memberHandle', ''))
+                  const email = _.get(memberInfo, 'email', _.get(s, 'registrant.email', ''))
+                  const createdAt = s.createdAt || s.created || s.submissionTime
+                  const submissionDate = createdAt ? moment(createdAt).format('MMM DD, YYYY HH:mm') : 'N/A'
+                  const reviewScore = !_.isEmpty(s.review) && !_.isNil(_.get(s.review, '0.score'))
+                    ? parseFloat(_.get(s.review, '0.score')).toFixed(2)
+                    : 'N/A'
+                  const reviewSummations = Array.isArray(s.reviewSummation) ? s.reviewSummation : []
+                  const aggregateScore = !_.isEmpty(reviewSummations) && !_.isNil(_.get(reviewSummations, '0.aggregateScore'))
+                    ? parseFloat(_.get(reviewSummations, '0.aggregateScore')).toFixed(2)
+                    : 'N/A'
+                  return (
+                    <tr
+                      key={s.id}
+                      className={styles.rowTable}
+                    >
+                      {!isF2F && !isBugHunt && (
+                        <td
+                          className={cn(styles['col-2Table'], styles['col-bodyTable'], styles[`level-${ratingLevel}`])}
+                        >
+                          <span title={ratingDisplay}>
+                            {ratingDisplay}
+                          </span>
+                        </td>
+                      )}
+                      <td className={cn(styles['col-3Table'], styles['col-bodyTable'])}>
+                        <a
+                          title={memberHandle}
+                          href={`${window.origin}/members/${memberHandle}`}
+                          target={`${
+                            _.includes(window.origin, 'www') ? '_self' : '_blank'
+                          }`}
+                          rel='noopener noreferrer'
+                          className={cn(
+                            styles['handle'],
+                            styles[`level-${ratingLevel}`]
+                          )}
+                        >
+                          {memberHandle}
+                        </a>
+                      </td>
+                      <td className={cn(styles['col-9Table'], styles['col-bodyTable'])}>
+                        <span title={email}>
+                          {email}
+                        </span>
+                      </td>
+                      <td className={cn(styles['col-4Table'], styles['col-bodyTable'])}>
+                        <span title={submissionDate}>
+                          {submissionDate}
+                        </span>
+                      </td>
+                      <td className={cn(styles['col-5Table'], styles['col-bodyTable'])}>
+                        <a href={`${SUBMISSION_REVIEW_APP_URL}/${challenge.id}/submissions/${s.id}`} target='_blank'>
+                          {reviewScore}
+                          &zwnj; &zwnj;/ &zwnj;
+                          {aggregateScore}
+                        </a>
+                      </td>
+                      <td className={cn(styles['col-6Table'], styles['col-bodyTable'])}>
+                        <span title={s.id}>
+                          {s.id}
+                        </span>
+                      </td>
+                      {canDownloadSubmission ? (<td className={cn(styles['col-8Table'], styles['col-bodyTable'])}>
+                        <div className={styles['button-wrapper']}>
+                          <Tooltip content='Download Submission'>
+                            <button
+                              className={styles['download-submission-button']}
+                              onClick={() => this.downloadSubmission(s)}
+                            >
+                              <ReactSVG path={assets(`${Download}`)} />
+                            </button>
+                          </Tooltip>
+
+                          <Tooltip content='Download Submission Artifacts' closeOnClick>
+                            <button
+                              className={styles['download-submission-button']}
+                              onClick={async () => {
+                                this.setState({ selectedSubmissionId: s.id, showArtifactsListModal: true })
+                              }}
+                            >
+                              <ReactSVG path={assets(`${DownloadArtifact}`)} />
+                            </button>
+                          </Tooltip>
+
+                          <Tooltip content='Ratings' closeOnClick>
+                            <button
+                              className={styles['download-submission-button']}
+                              onClick={() => {
+                                this.setState({ selectedSubmissionId: s.id, showRatingsListModal: true })
+                              }}
+                            >
+                              <ReactSVG path={assets(`${ReviewRatingList}`)} />
+                            </button>
+                          </Tooltip>
+                        </div>
+                      </td>) : null}
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+
+          {
+            this.state.showArtifactsListModal ? (
+              <ArtifactsListModal
+                submissionId={this.state.selectedSubmissionId}
+                token={this.props.token}
+                theme={theme}
+                onClose={() => {
+                  this.setState({
+                    selectedSubmissionId: '',
+                    showArtifactsListModal: false
+                  })
+                }}
+              />
+            ) : null
+          }
+
+          {
+            this.state.showRatingsListModal ? (
+              <RatingsListModal
+                token={this.props.token}
+                theme={theme}
+                onClose={() => {
+                  this.setState({ showRatingsListModal: false })
+                }}
+                submissionId={this.state.selectedSubmissionId}
+                challengeId={this.props.challenge.id}
+              />
+            ) : null
+          }
+
+          {canDownloadSubmission ? (<div className={styles['top-title']} >
+
+            <div className={styles.btnManageSubmissions} >
+              <PrimaryButton
+                text='Download All'
+                type='info'
+                disabled={downloadingAll}
+                onClick={async () => {
+                  // download submission
+                  this.setState({
+                    downloadingAll: true
+                  })
+                  const submissionsService = getSubmissionsService(token)
+                  const allFiles = []
+                  let downloadedFile = 0
+                  const checkToCompressFiles = () => {
+                    if (downloadedFile === submissions.length) {
+                      if (downloadedFile > 0) {
+                        compressFiles(allFiles, 'all-submissions.zip', () => {
+                          this.setState({
+                            downloadingAll: false
+                          })
+                        })
+                      } else {
+                        this.setState({
+                          downloadingAll: false
+                        })
+                      }
+                    }
+                  }
+                  checkToCompressFiles()
+                  _.forEach(submissions, (submission) => {
+                    let fileName = submission.legacySubmissionId
+                    if (!fileName) {
+                      fileName = submission.id
+                    }
+                    fileName = fileName + '.zip'
+                    submissionsService.downloadSubmission(submission.id)
+                      .then((blob) => {
+                        isValidDownloadFile(blob).then((isValidFile) => {
+                          if (isValidFile.success) {
+                            const file = new window.File([blob], `${fileName}`)
+                            allFiles.push(file)
+                          }
+                          downloadedFile += 1
+                          checkToCompressFiles()
+                        })
+                      }).catch(() => {
+                        downloadedFile += 1
+                        checkToCompressFiles()
+                      })
+                  })
+                }}
+              />
+            </div>
+          </div>) : null}
+        </div>
+
+        <div className={styles.paginationWrapper}>
+          <div className={styles.perPageContainer}>
+            <Select
+              styles={styles}
+              name='perPage'
+              value={{ label: submissionsPerPage, value: submissionsPerPage }}
+              placeholder='Per page'
+              options={PAGINATION_PER_PAGE_OPTIONS}
+              onChange={this.handlePerPageChange}
+            />
+          </div>
+          <div className={styles.paginationContainer}>
+            <Pagination
+              activePage={page}
+              itemsCountPerPage={submissionsPerPage}
+              totalItemsCount={totalSubmissions}
+              pageRangeDisplayed={5}
+              onChange={this.handlePageChange}
+              itemClass='page-item'
+              linkClass='page-link'
+            />
+          </div>
+        </div>
+
+        {alertMessage ? (
+          <AlertModal
+            title=''
+            message={alertMessage}
+            theme={theme}
+            closeText='OK'
+            onClose={() => {
+              this.setState({
+                alertMessage: ''
+              })
+            }}
+          />
+        ) : null}
+      </>
+    )
+  }
+}
+
+SubmissionsComponent.defaultProps = {
+  submissions: [],
+  token: '',
+  loggedInUserResource: null
+}
+
+SubmissionsComponent.propTypes = {
+  challenge: PT.shape({
+    id: PT.any,
+    checkpoints: PT.arrayOf(PT.object),
+    submissions: PT.arrayOf(PT.object),
+    submissionViewable: PT.string,
+    track: PT.oneOfType([
+      PT.string,
+      PT.shape({ track: PT.string, name: PT.string, abbreviation: PT.string })
+    ]).isRequired,
+    type: PT.string.isRequired,
+    tags: PT.arrayOf(PT.string),
+    registrants: PT.any,
+    phases: PT.any
+  }).isRequired,
+  submissions: PT.arrayOf(PT.shape()),
+  token: PT.string,
+  loggedInUserResource: PT.any,
+  page: PT.number,
+  submissionsPerPage: PT.number,
+  totalSubmissions: PT.number,
+  loadSubmissions: PT.func
+}
+
+export default SubmissionsComponent

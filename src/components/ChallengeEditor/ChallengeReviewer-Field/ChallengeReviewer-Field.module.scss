@@ -1,0 +1,131 @@
+@use '../../../styles/includes' as *;
+@import './shared.module.scss';
+
+.row {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: row;
+  margin: 30px 30px 0 30px;
+  align-content: space-between;
+  justify-content: flex-start;
+
+  .field {
+    @include upto-sm {
+      display: block;
+      padding-bottom: 10px;
+    }
+
+    label {
+      @include roboto-bold();
+      font-size: 16px;
+      line-height: 19px;
+      font-weight: 500;
+      color: $tc-gray-80;
+    }
+
+    &.col1 {
+      max-width: 185px;
+      min-width: 185px;
+      margin-right: 14px;
+      white-space: nowrap;
+      display: flex;
+      align-items: center;
+    }
+
+    &.col2 {
+      align-self: flex-end;
+      margin-bottom: auto;
+      margin-top: auto;
+      display: flex;
+      flex-direction: column;
+      width: 600px;
+    }
+
+    &.full {
+      width: 100%;
+    }
+
+    .fieldError {
+      margin-top: 12px;
+    }
+  }
+}
+
+// Tabs styling
+.tabsContainer {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  background-color: #fff;
+  .hidden {
+    display: none !important;
+  }
+}
+
+.tabsHeader {
+  display: flex;
+  border-bottom: 2px solid #ddd;
+  background-color: #f9f9f9;
+}
+
+.tabButton {
+  flex: 1;
+  padding: 12px 16px;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 500;
+  color: #666;
+  border-bottom: 3px solid transparent;
+  transition: all 0.3s ease;
+  margin-bottom: -1px;
+  
+  &:hover {
+    background-color: #f0f0f0;
+    color: #333;
+  }
+  
+  &.active {
+    color: #0066cc;
+    border-bottom-color: #0066cc;
+    background-color: #fff;
+  }
+}
+
+.defaultReviewerNote {
+  margin-top: 20px;
+  padding: 15px;
+  background-color: #e3f2fd;
+  border: 1px solid #bbdefb;
+  border-radius: 4px;
+
+  p {
+    margin: 0 0 15px 0;
+    color: #1976d2;
+    font-style: normal;
+  }
+}
+
+.applyDefaultBtn {
+  padding: 8px 16px;
+  background-color: #0066cc;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 500;
+  transition: background-color 0.3s ease;
+
+  &:hover {
+    background-color: #0052a3;
+  }
+
+  &:active {
+    background-color: #004080;
+  }
+}
+
+

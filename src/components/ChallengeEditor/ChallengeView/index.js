@@ -1,0 +1,351 @@
+import React, { useState, useEffect } from 'react'
+import _ from 'lodash'
+import PropTypes from 'prop-types'
+import cn from 'classnames'
+import { withRouter, Link } from 'react-router-dom'
+import styles from './ChallengeView.module.scss'
+import Track from '../../Track'
+import NDAField from '../NDAField'
+import UseSchedulingAPIField from '../UseSchedulingAPIField'
+import CopilotField from '../Copilot-Field'
+import ChallengeScheduleField from '../ChallengeSchedule-Field'
+import TextEditorField from '../TextEditor-Field'
+import AttachmentField from '../Attachment-Field'
+import ChallengePrizesField from '../ChallengePrizes-Field'
+import CopilotFeeField from '../CopilotFee-Field'
+import ChallengeTotalField from '../ChallengeTotal-Field'
+import Loader from '../../Loader'
+import AssignedMemberField from '../AssignedMember-Field'
+import { getResourceRoleByName } from '../../../util/tc'
+import { loadGroupDetails } from '../../../actions/challenges'
+import {
+  REVIEW_TYPES,
+  PHASE_PRODUCT_CHALLENGE_ID_FIELD,
+  MULTI_ROUND_CHALLENGE_TEMPLATE_ID,
+  DS_TRACK_ID,
+  DEV_TRACK_ID,
+  MARATHON_TYPE_ID,
+  CHALLENGE_TYPE_ID,
+  COMMUNITY_APP_URL,
+  AI_SCREENING_PHASE_NAME
+} from '../../../config/constants'
+import PhaseInput from '../../PhaseInput'
+import { hasAiReviewers } from '../ChallengeReviewer-Field/AiReviewerTab/utils'
+import CheckpointPrizesField from '../CheckpointPrizes-Field'
+import { isBetaMode } from '../../../util/localstorage'
+import WiproAllowedField from '../WiproAllowedField'
+
+const ChallengeView = ({
+  projectDetail,
+  challenge,
+  attachments,
+  isBillingAccountExpired,
+  metadata,
+  challengeResources,
+  token,
+  isLoading,
+  challengeId,
+  assignedMemberDetails,
+  enableEdit,
+  onLaunchChallenge,
+  onCloseTask,
+  projectPhases,
+  assignYourselfCopilot,
+  showRejectChallengeModal,
+  loggedInUser
+}) => {
+  const challengeBillingAccount = _.get(challenge, 'billing.billingAccountId')
+  const selectedType = _.find(metadata.challengeTypes, { id: challenge.typeId })
+  const challengeTrack = _.find(metadata.challengeTracks, { id: challenge.trackId })
+  const selectedMilestone = challenge.milestoneId
+    ? _.find(projectPhases, phase => phase.id === challenge.milestoneId)
+    : _.find(projectPhases,
+      phase => _.find(_.get(phase, 'products', []),
+        product => _.get(product, PHASE_PRODUCT_CHALLENGE_ID_FIELD) === challengeId
+      ))
+
+  const [openAdvanceSettings, setOpenAdvanceSettings] = useState(false)
+  const [groups, setGroups] = useState('')
+
+  useEffect(() => {
+    if (challenge.groups && challenge.groups.length > 0) {
+      loadGroupDetails(challenge.groups).then(res => {
+        const groups = _.map(res, 'name').join(', ')
+        setGroups(groups)
+      })
+    } else {
+      setGroups('')
+    }
+  }, [challenge.groups])
+
+  const getResourceFromProps = (name) => {
+    const { resourceRoles } = metadata
+    const role = getResourceRoleByName(resourceRoles, name)
+    return challengeResources && role && challengeResources.find(resource => resource.roleId === role.id)
+  }
+
+  const copilotResource = getResourceFromProps('Copilot')
+  const copilotFromResources = copilotResource ? copilotResource.memberHandle : ''
+  let copilot
+  if (challenge) {
+    copilot = challenge.copilot || (challenge.legacy && challenge.legacy.selfServiceCopilot)
+  }
+  copilot = copilot || copilotFromResources
+
+  const reviewType = challenge.reviewType ? challenge.reviewType.toUpperCase() : REVIEW_TYPES.COMMUNITY
+  const isCommunity = reviewType === REVIEW_TYPES.COMMUNITY
+  const timeLineTemplate = _.find(metadata.timelineTemplates, { id: challenge.timelineTemplateId })
+  if (isLoading || _.isEmpty(metadata.challengePhases) || challenge.id !== challengeId) return <Loader />
+  const showTimeline = false // disables the timeline for time being https://github.com/topcoder-platform/challenge-engine-ui/issues/706
+  const isTask = _.get(challenge, 'task.isTask', false)
+  const isFunChallenge = challenge.funChallenge === true
+  const phases = _.get(challenge, 'phases', [])
+  const showCheckpointPrizes = _.get(challenge, 'timelineTemplateId') === MULTI_ROUND_CHALLENGE_TEMPLATE_ID
+  const useDashboardData = _.find(challenge.metadata, { name: 'show_data_dashboard' })
+  const useDashboard = useDashboardData
+    ? (_.isString(useDashboardData.value) && useDashboardData.value === 'true') ||
+    (_.isBoolean(useDashboardData.value) && useDashboardData.value) : false
+  const showDashBoard = (() => {
+    const isSupportedTrack = challenge.trackId === DS_TRACK_ID || challenge.trackId === DEV_TRACK_ID
+    const isSupportedType = challenge.typeId === MARATHON_TYPE_ID || challenge.typeId === CHALLENGE_TYPE_ID
+
+    return (isSupportedTrack && isSupportedType) || Boolean(useDashboardData)
+  })()
+  const dashboardToggle = showDashBoard && (
+    <div className={styles.row}>
+      <div className={styles.col}>
+        <label className={styles.fieldTitle} htmlFor='isDashboardEnabled'>Use data dashboard :</label>
+      </div>
+      <div className={styles.col}>
+        <input
+          name='isDashboardEnabled'
+          type='checkbox'
+          id='isDashboardEnabled'
+          checked={useDashboard}
+          readOnly
+          disabled
+        />
+      </div>
+    </div>
+  )
+
+  return (
+    <div className={styles.wrapper}>
+      <div className={styles.container}>
+        <div className={styles.formContainer}>
+          <div className={styles.group}>
+            <div className={cn(styles.row, styles.topRow)}>
+              <div className={styles.col}>
+                <span>
+                  <span className={styles.fieldTitle}>Project: <Link to={`/projects/${projectDetail.id}/challenges`}>
+                    {projectDetail ? projectDetail.name : ''}
+                  </Link>
+                  </span>
+                </span>
+              </div>
+              {selectedMilestone &&
+                <div className={styles.col}>
+                  <span><span className={styles.fieldTitle}>Milestone:</span> {selectedMilestone ? selectedMilestone.name : ''}</span>
+                </div>
+              }
+              <div className={styles.col}>
+                <span className={styles.fieldTitle}>Domain:</span>
+                <Track disabled type={challengeTrack} isActive key={challenge.trackId} onUpdateOthers={() => { }} />
+              </div>
+              <div className={styles.col}>
+                <span><span className={styles.fieldTitle}>Type:</span> {selectedType ? selectedType.name : ''}</span>
+              </div>
+              <div className={styles.col}>
+                <span><span className={styles.fieldTitle}>Status:</span> {challenge.status}</span>
+              </div>
+            </div>
+
+            <div className={cn(styles.row, styles.topRow)}>
+              <div className={styles.col}>
+                <span><span className={styles.fieldTitle}>Challenge Name:</span> <a href={`${COMMUNITY_APP_URL}/challenges/${challenge.id}`} target='_blank' rel='noopener noreferrer'>
+                  {challenge.name}
+                </a></span>
+              </div>
+            </div>
+            {isTask &&
+              <AssignedMemberField challenge={challenge} assignedMemberDetails={assignedMemberDetails} readOnly />}
+            <CopilotField challenge={{
+              copilot,
+              selfService: challenge.legacy.selfService
+            }} copilots={challengeResources} assignYourselfCopilot={assignYourselfCopilot} showRejectChallengeModal={showRejectChallengeModal} readOnly loggedInUser={loggedInUser} />
+            <div className={cn(styles.row, styles.topRow)}>
+              <div className={styles.col}>
+                <span><span
+                  className={styles.fieldTitle}>Review Type:</span> {isCommunity ? 'Community' : 'Internal'}</span>
+              </div>
+            </div>
+
+            <div className={styles.row}>
+              <div className={styles.tcCheckbox}>
+                <input
+                  name='isOpenAdvanceSettings'
+                  type='checkbox'
+                  id='isOpenAdvanceSettings'
+                  checked={openAdvanceSettings}
+                  onChange={() => { setOpenAdvanceSettings(!openAdvanceSettings) }}
+                />
+                <label htmlFor='isOpenAdvanceSettings'>
+                  <div>View Advanced Settings</div>
+                  <input type='hidden' />
+                </label>
+              </div>
+            </div>
+            {openAdvanceSettings && (
+              <>
+                {dashboardToggle}
+                <NDAField beta challenge={challenge} readOnly />
+                <WiproAllowedField challenge={challenge} onUpdateOthers={() => {}} readOnly />
+                <div className={cn(styles.row, styles.topRow)}>
+                  <div className={styles.col}>
+                    <span><span className={styles.fieldTitle}>Groups:</span> {groups}</span>
+                  </div>
+                </div>
+                <div className={styles.row}>
+                  <div className={styles.col}>
+                    <span>
+                      <span className={styles.fieldTitle}>Billing Account Id:</span>
+                      {challengeBillingAccount}
+                    </span>
+                    {isBillingAccountExpired && <span className={styles.expiredMessage}>Expired</span>}
+                  </div>
+                </div>
+                {isBetaMode() && (
+                  <UseSchedulingAPIField challenge={challenge} readOnly />
+                )}
+              </>
+            )}
+            <div className={styles.row}>
+              <div className={styles.col}>
+                <span className={styles.fieldTitle}>Timezone:</span>
+                {Intl.DateTimeFormat().resolvedOptions().timeZone}
+              </div>
+            </div>
+            {
+              (() => {
+                const phaseList = challenge.legacy.subTrack === 'WEB_DESIGNS' && challenge.phases.length === 8
+                  ? phases
+                  : _.sortBy(phases, ['scheduledEndDate'])
+                const hasRealAiScreeningPhase = phaseList.some(p => p.name === AI_SCREENING_PHASE_NAME)
+                const showVirtualAiScreening = hasAiReviewers(challenge.reviewers) && !hasRealAiScreeningPhase
+                const submissionIndex = phaseList.findIndex(p => p.name === 'Submission')
+                const checkpointSubmissionIndex = phaseList.findIndex(p => p.name === 'Checkpoint Submission')
+                return (
+                  <>
+                    {phaseList.map((phase, index) => (
+                      <React.Fragment key={index}>
+                        <PhaseInput
+                          phase={phase}
+                          phaseIndex={index}
+                          readOnly
+                        />
+                        {showVirtualAiScreening && (index === submissionIndex || index === checkpointSubmissionIndex) && (
+                          <PhaseInput
+                            phase={{ name: AI_SCREENING_PHASE_NAME }}
+                            readOnly
+                            isVirtual
+                          />
+                        )}
+                      </React.Fragment>
+                    ))}
+                    {showVirtualAiScreening && submissionIndex === -1 && checkpointSubmissionIndex === -1 && (
+                      <PhaseInput
+                        phase={{ name: AI_SCREENING_PHASE_NAME }}
+                        readOnly
+                        isVirtual
+                      />
+                    )}
+                  </>
+                )
+              })()
+            }
+            {showTimeline && (
+              <ChallengeScheduleField
+                templates={metadata.timelineTemplates}
+                challengePhases={metadata.challengePhases}
+                challenge={challenge}
+                challengePhasesWithCorrectTimeline={challenge.phases}
+                currentTemplate={timeLineTemplate}
+                readOnly
+              />
+            )}
+          </div>
+          <div className={styles.group}>
+            <div className={styles.title}>Public specification <span>*</span></div>
+            <TextEditorField
+              challenge={challenge}
+              readOnly
+              showReviewerField={!isTask}
+            />
+            {/* hide until challenge API change is pushed to PROD https://github.com/topcoder-platform/challenge-api/issues/348 */}
+            {false && <AttachmentField
+              challengeId={challenge.id}
+              attachments={attachments}
+              token={token}
+              readOnly
+            />}
+            {isFunChallenge ? (
+              <div className={cn(styles.row, styles.topRow)}>
+                <div className={styles.col}>
+                  <span><span className={styles.fieldTitle}>Fun Challenge:</span> True</span>
+                </div>
+              </div>
+            ) : (
+              <>
+                <ChallengePrizesField challenge={challenge} readOnly />
+                {
+                  showCheckpointPrizes && (
+                    <CheckpointPrizesField challenge={challenge} readOnly />
+                  )
+                }
+                <CopilotFeeField challenge={challenge} readOnly />
+                <ChallengeTotalField challenge={challenge} />
+              </>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+ChallengeView.defaultProps = {
+  projectDetail: {},
+  challenge: {},
+  metadata: {},
+  challengeResources: {},
+  token: ''
+}
+
+ChallengeView.propTypes = {
+  match: PropTypes.shape({
+    path: PropTypes.string,
+    params: PropTypes.shape({
+      challengeId: PropTypes.string,
+      projectId: PropTypes.string
+    })
+  }).isRequired,
+  projectDetail: PropTypes.object,
+  challenge: PropTypes.object,
+  isBillingAccountExpired: PropTypes.bool,
+  attachments: PropTypes.array,
+  metadata: PropTypes.object,
+  token: PropTypes.string,
+  isLoading: PropTypes.bool.isRequired,
+  challengeId: PropTypes.string.isRequired,
+  challengeResources: PropTypes.arrayOf(PropTypes.object),
+  assignedMemberDetails: PropTypes.shape(),
+  enableEdit: PropTypes.bool,
+  onLaunchChallenge: PropTypes.func,
+  onCloseTask: PropTypes.func,
+  projectPhases: PropTypes.arrayOf(PropTypes.object),
+  assignYourselfCopilot: PropTypes.func.isRequired,
+  showRejectChallengeModal: PropTypes.func.isRequired,
+  loggedInUser: PropTypes.object
+}
+
+export default withRouter(ChallengeView)

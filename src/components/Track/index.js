@@ -2,45 +2,32 @@ import React from 'react'
 import PropTypes from 'prop-types'
 import cn from 'classnames'
 import ReactSVG from 'react-svg'
-import { CHALLENGE_TRACKS } from '../../config/constants'
 import styles from './Track.module.scss'
 
 const assets = require.context('../../assets/images/tracks', false, /svg/)
 
-const Track = ({ type, isActive, onUpdateOthers }) => {
-  const icon = `./${type.toLowerCase()}.svg`
-  const getName = (type) => {
-    switch (type.toUpperCase()) {
-      case CHALLENGE_TRACKS.DEVELOP:
-        return 'Development'
-      case CHALLENGE_TRACKS.DESIGN:
-        return 'Design'
-      case CHALLENGE_TRACKS.DATA_SCIENCE:
-        return 'Data Science'
-      case CHALLENGE_TRACKS.QA:
-        return CHALLENGE_TRACKS.QA
-      default:
-        return ''
-    }
-  }
+const Track = ({ type, isActive, onUpdateOthers, disabled }) => {
+  const icon = type ? `./${type.abbreviation.toLowerCase()}.svg` : ''
 
   return (
-    <div className={cn(styles.container, { [styles.active]: isActive })} onClick={() => onUpdateOthers({ field: 'track', value: type })}>
+    <div className={cn(styles.container, { [styles.active]: isActive, [styles.disabled]: disabled })} onClick={() => onUpdateOthers({ field: 'trackId', value: type.id })}>
       <div className={styles.icon}>
         { assets && assets.keys().includes(icon) ? <ReactSVG path={assets(`${icon}`)} /> : '' }
       </div>
-      <span className={styles.name}>{getName(type)}</span>
+      <span className={styles.name}>{type ? type.name : 'Unkown'}</span>
     </div>
   )
 }
 
 Track.defaultProps = {
-  isActive: false
+  isActive: false,
+  disabled: false
 }
 
 Track.propTypes = {
-  type: PropTypes.string.isRequired,
+  type: PropTypes.object,
   isActive: PropTypes.bool,
+  disabled: PropTypes.bool,
   onUpdateOthers: PropTypes.func.isRequired
 }
 

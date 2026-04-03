@@ -10,6 +10,8 @@ process.on('unhandledRejection', err => {
 // Ensure environment variables are read.
 require('../config/env')
 
+console.log(`Build script is run`)
+
 const path = require('path')
 const chalk = require('chalk')
 const fs = require('fs-extra')
@@ -26,7 +28,7 @@ const printBuildError = require('react-dev-utils/printBuildError')
 const measureFileSizesBeforeBuild =
   FileSizeReporter.measureFileSizesBeforeBuild
 const printFileSizesAfterBuild = FileSizeReporter.printFileSizesAfterBuild
-const useYarn = fs.existsSync(paths.yarnLockFile)
+const useYarn = false
 
 // These sizes are pretty large. We'll warn for bundles exceeding them.
 const WARN_AFTER_BUNDLE_GZIP_SIZE = 512 * 1024
@@ -108,12 +110,17 @@ checkBrowsers(paths.appPath, isInteractive)
     err => {
       console.log(chalk.red('Failed to compile.\n'))
       printBuildError(err)
+      if (err && err.stack) {
+        console.error(err.stack)
+      }
       process.exit(1)
     }
   )
   .catch(err => {
-    if (err && err.message) {
-      console.error(err.message)
+    if (err && process.env.NODE_ENV === 'development') {
+      console.log(err)
+    } else {
+      console.error('An unexpected error occurred while build')
     }
     process.exit(1)
   })
@@ -135,9 +142,12 @@ function build (previousFileSizes) {
           warnings: []
         })
       } else {
-        messages = formatWebpackMessages(
-          stats.toJson({ all: false, warnings: true, errors: true })
-        )
+        const json = stats.toJson({ all: false, warnings: true, errors: true })
+        const normalized = {
+          errors: (json.errors || []).map(e => (typeof e === 'string' ? e : e && (e.message || e.stack || String(e)))) ,
+          warnings: (json.warnings || []).map(w => (typeof w === 'string' ? w : w && (w.message || String(w))))
+        }
+        messages = formatWebpackMessages(normalized)
       }
       if (messages.errors.length) {
         // Only keep the first error. Others are often indicative

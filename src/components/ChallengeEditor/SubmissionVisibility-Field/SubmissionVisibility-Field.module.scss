@@ -1,4 +1,4 @@
-@import "../../../styles/includes";
+@use '../../../styles/includes' as *;
 
 .row {
   box-sizing: border-box;
@@ -73,7 +73,23 @@
     margin-bottom: 18px;
 
     input[type=checkbox] {
-      display: none;
+      display: flex;
+      opacity: 0;
+
+      &:focus ~ label {
+        &::after {
+          opacity: 0.3;
+        }
+      }
+
+      &:checked ~ label {
+        background: $tc-blue-20;
+
+        &::after {
+          opacity: 1;
+          border-color: $white;
+        }
+      }
     }
 
     label {
@@ -93,6 +109,10 @@
       background: $tc-gray-30;
       transition: all 0.15s ease-in-out;
 
+      &.readOnly {
+        cursor: auto;
+      }
+
       &::after {
         opacity: 0;
         content: '';
@@ -111,19 +131,14 @@
       &:hover::after {
         opacity: 0.3;
       }
+      &:hover:read-only::after {
+        opacity: 0;
+      }
 
       div {
         margin-left: 24px;
         width: 500px;
       }
-    }
-
-    input[type=checkbox]:checked ~ label {
-      background: $tc-blue-20;
-    }
-
-    input[type=checkbox]:checked + label::after {
-      border-color: $white;
     }
   }
 

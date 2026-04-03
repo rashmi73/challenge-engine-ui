@@ -11,23 +11,50 @@ const initialState = {
   isLoading: true,
   loadingId: null,
   challengeId: null,
-  challengeSubmissions: []
+  challengeSubmissions: [],
+  totalSubmissions: 0,
+  submissionsPerPage: 10,
+  page: 1
 }
 
 export default function (state = initialState, action) {
   switch (action.type) {
     case LOAD_CHALLENGE_SUBMISSIONS_SUCCESS:
+      const headerTotal = action.payload.headers && action.payload.headers['x-total']
+      const totalCount = action.payload.totalCount
+      const totalSubmissions = totalCount != null
+        ? totalCount
+        : (headerTotal != null ? Number(headerTotal) : 0)
       return {
         ...state,
-        challengeSubmissions: action.challengeSubmissions,
+        challengeSubmissions: action.payload.data,
         isLoading: false,
         loadingId: null,
-        challengeId: state.loadingId
+        challengeId: state.loadingId,
+        totalSubmissions,
+        page: action.payload.page,
+        submissionsPerPage: action.payload.perPage
       }
     case LOAD_CHALLENGE_SUBMISSIONS_PENDING:
-      return { ...state, isLoading: true, loadingId: action.challengeId, challengeId: null }
+      return {
+        ...state,
+        isLoading: true,
+        loadingId: action.challengeId,
+        challengeId: null,
+        challengeSubmissions: [],
+        totalSubmissions: 0,
+        totalPages: 0
+      }
     case LOAD_CHALLENGE_SUBMISSIONS_FAILURE:
-      return { ...state, isLoading: false, loadingId: null, challengeId: null, challengeSubmissions: [] }
+      return {
+        ...state,
+        isLoading: false,
+        loadingId: null,
+        challengeId: null,
+        challengeSubmissions: [],
+        totalSubmissions: 0,
+        totalPages: 0
+      }
     default:
       return state
   }

@@ -1,54 +1,229 @@
 /**
  * Component to render Challenges page
  */
-import React from 'react'
+import React, { useState, useEffect } from 'react'
 import PropTypes from 'prop-types'
-import Sticky from 'react-stickynode'
 import { Helmet } from 'react-helmet'
 import { Link } from 'react-router-dom'
-
-import { PrimaryButton } from '../Buttons'
+import ProjectStatus from './ProjectStatus'
+import { PROJECT_ROLES, PROJECT_STATUS, COPILOTS_URL, CHALLENGE_STATUS } from '../../config/constants'
+import { PrimaryButton, OutlineButton } from '../Buttons'
 import ChallengeList from './ChallengeList'
 import styles from './ChallengesComponent.module.scss'
-import Loader from '../Loader'
+import { checkAdmin, checkCanManageProject, checkCanViewProjectAssets, checkReadOnlyRoles, checkManager, getProjectMemberRole } from '../../util/tc'
 
-const ChallengesComponent = ({ challenges, isLoading, warnMessage, setFilterChallengeValue, filterChallengeName, activeProject, status }) => {
+const ChallengesComponent = ({
+  challenges,
+  projects,
+  isLoading,
+  setActiveProject,
+  warnMessage,
+  filterChallengeName,
+  filterChallengeType,
+  filterDate,
+  filterSortBy,
+  filterSortOrder,
+  activeProject,
+  filterProjectOption,
+  dashboard,
+  status,
+  loadChallengesByPage,
+  activeProjectId,
+  page,
+  perPage,
+  totalChallenges,
+  partiallyUpdateChallengeDetails,
+  deleteChallenge,
+  isBillingAccountExpired,
+  billingStartDate,
+  billingEndDate,
+  billingAccounts,
+  currentBillingAccount,
+  updateProject,
+  isBillingAccountsLoading,
+  isBillingAccountLoadingFailed,
+  isBillingAccountLoading,
+  selfService,
+  auth,
+  challengeTypes,
+  fetchNextProjects
+}) => {
+  const [loginUserRoleInProject, setLoginUserRoleInProject] = useState('')
+  const isReadOnly = checkReadOnlyRoles(auth.token) || loginUserRoleInProject === PROJECT_ROLES.READ
+  const canManageProject = checkCanManageProject(auth.token, activeProject)
+  const canViewAssets = checkCanViewProjectAssets(auth.token, activeProject)
+
+  const projectStatus = activeProject && activeProject.status
+    ? activeProject.status.toUpperCase()
+    : ''
+  const isCompletedOrCancelled =
+  projectStatus === CHALLENGE_STATUS.CANCELLED || projectStatus === CHALLENGE_STATUS.COMPLETED
+
+  useEffect(() => {
+    const loggedInUser = auth.user
+    const loginUserProjectRole = getProjectMemberRole(activeProject, loggedInUser.userId)
+    if (loginUserProjectRole && loginUserRoleInProject !== loginUserProjectRole) {
+      setLoginUserRoleInProject(loginUserProjectRole)
+    }
+  }, [activeProject, auth, loginUserRoleInProject])
+
   return (
-    <Sticky top={10} bottomBoundary='#SidebarContainer'>
-      <div>
-        <Helmet title={activeProject ? activeProject.name : ''} />
-        <div className={styles.titleContainer}>
-          <span className={styles.fakeLeftSpace} />
-          <div className={styles.title}>{activeProject ? activeProject.name : ''}</div>
-          {activeProject ? (<Link className={styles.buttonLaunchNew} to={`/projects/${activeProject.id}/challenges/new`}>
-            <PrimaryButton text={'Launch New'} type={'info'} />
-          </Link>) : (<span />)}
+    <div>
+      <Helmet title={activeProject ? activeProject.name : ''} />
+      {!dashboard && <div className={styles.titleContainer}>
+        <div className={styles.titleLinks}>
+          <div className={styles.title}>
+            {activeProject ? activeProject.name : ''}
+            {activeProject && activeProject.status && <ProjectStatus className={styles.status} status={activeProject.status} />}
+          </div>
+          {activeProject && activeProject.id && canManageProject && (
+            <span>
+              (
+              <Link
+                to={`/projects/${activeProject.id}/edit`}
+              >
+                Edit Project
+              </Link>
+              )
+            </span>
+          )}
         </div>
-        <div className={styles.challenges}>
-          {isLoading && challenges.length === 0 ? <Loader /> : <ChallengeList challenges={challenges} warnMessage={warnMessage} activeProject={activeProject} setFilterChallengeValue={setFilterChallengeValue} filterChallengeName={filterChallengeName} status={status} />}
-          {isLoading && challenges.length > 0 && <Loader />}
-        </div>
+        {activeProject && activeProject.id && (!isReadOnly || canViewAssets) ? (
+          <div className={styles.projectActionButtonWrapper}>
+            {!isReadOnly && (
+              <OutlineButton
+                text={'Users'}
+                type='info'
+                submit
+                link={{
+                  pathname: '/users',
+                  state: { projectId: activeProjectId, projectName: activeProject.name }
+                }}
+                className={styles.btnOutline}
+              />
+            )}
+            {canViewAssets && (
+              <OutlineButton
+                text={'Assets Library'}
+                type={'info'}
+                submit
+                link={`/projects/${activeProjectId}/assets`}
+                className={styles.btnOutline}
+              />
+            )}
+            {!isReadOnly && (checkAdmin(auth.token) || checkManager(auth.token)) && !isCompletedOrCancelled && (
+              <OutlineButton
+                text='Request Copilot'
+                type={'info'}
+                url={`${COPILOTS_URL}/requests/new?projectId=${activeProject.id}`}
+                target={'_blank'}
+              />
+            )}
+            {!isReadOnly && (
+              activeProject.status === PROJECT_STATUS.ACTIVE ? (
+                <Link
+                  to={`/projects/${activeProject.id}/challenges/new`}
+                >
+                  <PrimaryButton text={'Launch New'} type={'info'} />
+                </Link>
+              ) : (
+                <PrimaryButton text={'Launch New'} type={'info'} disabled />
+              )
+            )}
+          </div>
+        ) : (
+          <span />
+        )}
+      </div>}
+      <div className={styles.challenges}>
+        <ChallengeList
+          challenges={challenges}
+          fetchNextProjects={fetchNextProjects}
+          projects={projects}
+          warnMessage={warnMessage}
+          isLoading={isLoading}
+          activeProject={activeProject}
+          setActiveProject={setActiveProject}
+          filterChallengeName={filterChallengeName}
+          filterChallengeType={filterChallengeType}
+          filterProjectOption={filterProjectOption}
+          filterDate={filterDate}
+          filterSortBy={filterSortBy}
+          filterSortOrder={filterSortOrder}
+          dashboard={dashboard}
+          status={status}
+          loadChallengesByPage={loadChallengesByPage}
+          activeProjectId={activeProjectId}
+          page={page}
+          perPage={perPage}
+          totalChallenges={totalChallenges}
+          partiallyUpdateChallengeDetails={partiallyUpdateChallengeDetails}
+          deleteChallenge={deleteChallenge}
+          isBillingAccountExpired={isBillingAccountExpired}
+          billingStartDate={billingStartDate}
+          billingEndDate={billingEndDate}
+          billingAccounts={billingAccounts}
+          currentBillingAccount={currentBillingAccount}
+          updateProject={updateProject}
+          isBillingAccountsLoading={isBillingAccountsLoading}
+          isBillingAccountLoadingFailed={isBillingAccountLoadingFailed}
+          isBillingAccountLoading={isBillingAccountLoading}
+          selfService={selfService}
+          auth={auth}
+          challengeTypes={challengeTypes}
+          loginUserRoleInProject={loginUserRoleInProject}
+        />
       </div>
-    </Sticky>
+    </div>
   )
 }
 
 ChallengesComponent.propTypes = {
   challenges: PropTypes.arrayOf(PropTypes.object),
+  projects: PropTypes.arrayOf(PropTypes.object),
+  fetchNextProjects: PropTypes.func.isRequired,
   activeProject: PropTypes.shape({
     id: PropTypes.number,
-    name: PropTypes.string
+    name: PropTypes.string,
+    status: PropTypes.string,
+    members: PropTypes.arrayOf(PropTypes.shape())
   }),
   isLoading: PropTypes.bool,
   warnMessage: PropTypes.string,
-  setFilterChallengeValue: PropTypes.func,
   filterChallengeName: PropTypes.string,
-  status: PropTypes.string
+  filterChallengeType: PropTypes.shape(),
+  filterProjectOption: PropTypes.shape(),
+  filterDate: PropTypes.shape(),
+  filterSortBy: PropTypes.string,
+  filterSortOrder: PropTypes.string,
+  status: PropTypes.string,
+  activeProjectId: PropTypes.number,
+  loadChallengesByPage: PropTypes.func.isRequired,
+  page: PropTypes.number.isRequired,
+  perPage: PropTypes.number.isRequired,
+  totalChallenges: PropTypes.number.isRequired,
+  partiallyUpdateChallengeDetails: PropTypes.func.isRequired,
+  deleteChallenge: PropTypes.func.isRequired,
+  setActiveProject: PropTypes.func.isRequired,
+  isBillingAccountExpired: PropTypes.bool,
+  dashboard: PropTypes.bool,
+  billingStartDate: PropTypes.string,
+  billingEndDate: PropTypes.string,
+  billingAccounts: PropTypes.arrayOf(PropTypes.shape()),
+  updateProject: PropTypes.func.isRequired,
+  isBillingAccountsLoading: PropTypes.bool,
+  currentBillingAccount: PropTypes.number,
+  isBillingAccountLoadingFailed: PropTypes.bool,
+  isBillingAccountLoading: PropTypes.bool,
+  selfService: PropTypes.bool,
+  auth: PropTypes.object.isRequired,
+  challengeTypes: PropTypes.arrayOf(PropTypes.shape())
 }
 
 ChallengesComponent.defaultProps = {
   challenges: [],
-  isLoading: true
+  isLoading: true,
+  challengeTypes: []
 }
 
 export default ChallengesComponent

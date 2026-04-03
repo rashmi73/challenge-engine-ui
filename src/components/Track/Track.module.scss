@@ -1,4 +1,4 @@
-@import "../../styles/includes";
+@use '../../styles/includes' as *;
 
 .container {
   display: flex;
@@ -13,6 +13,18 @@
 
   &.active {
     border-color: $tc-blue-20;
+  }
+
+  &.disabled {
+    cursor: auto;
+    border-color: transparent;
+    display: flex;
+    align-items: center;
+  }
+
+  div {
+    display: flex;
+    align-items: center;
   }
 }
 

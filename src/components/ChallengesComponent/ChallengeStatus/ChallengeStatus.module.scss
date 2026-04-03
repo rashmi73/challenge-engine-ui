@@ -1,12 +1,13 @@
-@import "../../../styles/includes";
+@use '../../../styles/includes' as *;
 
 .container {
-  height: 22px;
+  min-height: 22px;
   width: 86px;
-  border-radius: 11.5px;
+  border-radius: 3px;
   display: flex;
   justify-content: center;
   align-items: center;
+  text-align: center;
 
   span {
     @include roboto;
@@ -32,5 +33,12 @@
   &.blue {
     background-color: $status-blue;
   }
-}
 
+  &.yellow {
+    background-color: $status-yellow;
+  }
+
+  &.red {
+    background-color: $tc-red;
+  }
+}
